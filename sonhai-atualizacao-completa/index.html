@@ -730,8 +730,33 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
 
   // ------------------------------------------------------------- aplicar ação
   /** Aplica a ação interpretada ao estado. Retorna { ok, msg, item, colecao }. */
+  // ------------------------------------------------------------------ limites
+  const LIMITE_VALOR = 99000000;
+  const LIMITE_TEXTO = 150;
+  const CAMPOS_VALOR = ['valor', 'custo', 'limite', 'saldo', 'parcela', 'guardadoAntes', 'orcamento', 'saldoInicial', 'pago'];
+  /** Corta textos em 150 caracteres e prende valores entre -99 milhões e 99 milhões (em qualquer item). */
+  function sanearItem(o, prof) {
+    if (!o || typeof o !== 'object' || (prof || 0) > 4) return o;
+    for (const k of Object.keys(o)) {
+      const v = o[k];
+      if (typeof v === 'string' && k !== 'id' && k !== 'txt') o[k] = v.slice(0, LIMITE_TEXTO);
+      else if (typeof v === 'number' && CAMPOS_VALOR.includes(k)) o[k] = !isFinite(v) ? 0 : Math.max(-LIMITE_VALOR, Math.min(LIMITE_VALOR, Math.round(v * 100) / 100));
+      else if (v && typeof v === 'object') sanearItem(v, (prof || 0) + 1);
+    }
+    return o;
+  }
+  function sanearEstado(estado) {
+    if (!estado || typeof estado !== 'object') return estado;
+    for (const col of ['lancamentos', 'contas', 'parcelados', 'cartoes', 'anuais', 'sonhos', 'dividas', 'agenda', 'categorias']) if (Array.isArray(estado[col])) estado[col].forEach((x) => sanearItem(x));
+    if (estado.perfil) sanearItem(estado.perfil);
+    if (Array.isArray(estado.chat)) estado.chat = estado.chat.slice(-200).map((m) => ({ de: m.de === 'me' ? 'me' : 'bot', txt: String(m.txt || '').slice(0, 4000), em: +m.em || 0 }));
+    return estado;
+  }
+
   function aplicar(estado, acao, opts) {
     opts = opts || {};
+    for (const k of ['valor', 'valorParcela']) if (acao && typeof acao[k] === 'number' && Math.abs(acao[k]) > LIMITE_VALOR) return { ok: false, msg: '🙈 O valor máximo é R$ 99.000.000,00. Confere o valor pra mim?' };
+    for (const k of ['desc', 'titulo', 'nome', 'termo']) if (acao && typeof acao[k] === 'string') acao[k] = acao[k].slice(0, LIMITE_TEXTO);
     const origem = opts.origem || 'app';
     const hoje = opts.hoje || new Date();
     const now = Date.now();
@@ -1098,7 +1123,7 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
 
   return {
     CATEGORIAS, TIPOS_ENTRADA, INCENTIVOS, MESES, sem, uid, iso, pad, brl, dataBR, mesDe, nomeMes, mesCurto, somaMes, difMeses, diasNoMes, agora,
-    BANCOS, detectarCartao, garantirCartao, mesFatura, fatura, pagarFatura, faturasAVencer, rotuloFatura,
+    LIMITE_VALOR, LIMITE_TEXTO, sanearEstado, BANCOS, detectarCartao, garantirCartao, mesFatura, fatura, pagarFatura, faturasAVencer, rotuloFatura,
     conversar, interpretar, aplicar, remover, acharSonho, retirarDoSonho, estadoVazio, resumoMes, mesesComDados, parcelaNoMes, contaNoMes, contasAVencer, contasAtrasadas, totalSonho,
     textoResumo, textoContas, textoAgenda, textoAjuda, mensagemHumor, barra, mesclar, adivinharCategoria, extrairValor, extrairData, extrairHora
   };
@@ -1182,7 +1207,7 @@ if (!S) { S = exemplo(); store.set(S); }
 S.cartoes = S.cartoes || [];
 const limpaEmoji = (e) => String(e || '').replace(/[<>"'&`]/g, '').slice(0, 8);
 function sanear(){ (S.categorias || []).forEach((c) => { c.emoji = limpaEmoji(c.emoji); c.cor = /^#[0-9a-f]{3,8}$/i.test(c.cor) ? c.cor : '#9AA3AF'; }); (S.sonhos || []).forEach((x) => { x.emoji = limpaEmoji(x.emoji); }); (S.cartoes || []).forEach((x) => { x.cor = /^#[0-9a-f]{3,8}$/i.test(x.cor) ? x.cor : '#1B3A6B'; }); }
-sanear();
+sanear(); C.sanearEstado(S);
 
 // ------------------------------------------------------------ salvar e sincronizar
 let syncT = null, rev = 0;
@@ -1237,6 +1262,7 @@ function sheet(html, onMount, opts){
   const sc = $('#scrim'); sc.addEventListener('click', (e) => { if (e.target === sc && !sheetFixa) fechar(); });
   const sv = $('#sheet-voltar'); if (sv) sv.onclick = () => fechar();
   if (onMount) onMount($('.sheet', L));
+  limitarCampos($('.sheet', L));
   const f = $('.sheet input, .sheet select', L); if (f && !('ontouchstart' in window)) f.focus();
 }
 let sheetFixa = false;
@@ -1539,7 +1565,7 @@ TELAS.ajustes = function(){
   h += '<section class="card"><h2 style="margin-bottom:10px">🏷️ Categorias e limites</h2><div class="sub" style="margin-bottom:8px">Toque para mudar o emoji, o nome ou colocar um limite mensal. Eu aviso quando passar.</div><div class="list">' + S.categorias.map((c, i) => '<button class="item" data-edit-cat="' + i + '"><span class="ico" style="background:' + soft(c.cor) + '">' + c.emoji + '</span><span class="mid"><span class="ttl">' + esc(c.nome) + '</span><span class="meta">' + (c.limite ? 'Limite ' + brl(c.limite) : 'Sem limite') + '</span></span></button>').join('') + '</div><button class="btn ghost block" style="margin-top:8px" data-novo="categoria">+ Nova categoria</button></section>';
   h += '<section class="card"><h2 style="margin-bottom:10px">💾 Meus dados no aparelho</h2><div class="btnrow"><button class="btn ghost" id="bk-exp">⬇️ Copiar backup</button><label class="btn ghost" for="bk-imp">⬆️ Importar backup</label><input id="bk-imp" type="file" accept=".json,application/json" hidden></div>' + (SERVER ? '' : '<div class="btnrow" style="margin-top:8px"><button class="btn ghost" id="bk-demo">🧪 Ver exemplo</button><button class="btn danger" id="bk-zero">🧹 Começar do zero</button></div>') + '<div id="bk-out"></div></section>';
   h += blocoConta();
-  h += '<p class="sub" style="text-align:center">Sonhaí · versão 1.4 (04/11) · feito com 💙 para ajudar famílias</p>';
+  h += '<p class="sub" style="text-align:center">Sonhaí · versão 1.5 (04/11) · feito com 💙 para ajudar famílias</p>';
   return h;
 };
 
@@ -1601,6 +1627,7 @@ function bind(){
   A.querySelectorAll('[data-semana]').forEach((b) => b.onclick = () => { const d = new Date(view.diaAgenda + 'T12:00'); d.setDate(d.getDate() + +b.dataset.semana); view.diaAgenda = C.iso(d); render(); });
   const bu = $('#busca'); if (bu) bu.oninput = () => { view.busca = bu.value; const pos = bu.selectionStart; render(); const n = $('#busca'); n.focus(); n.setSelectionRange(pos, pos); };
   const sd = $('#sair-demo'); if (sd) sd.onclick = onboarding;
+  limitarCampos(A);
   const tgOn = $('#tg-on'); if (tgOn) tgOn.onclick = async () => { const w = window.open('', '_blank'); try { const j = await api('/api/telegram/link', {}); if (w) w.location = j.link; else location.href = j.link; toast('✈️ Toque em Iniciar no Telegram. Depois volte aqui.'); const t0 = Date.now(); const iv = setInterval(async () => { try { conta = await api('/api/eu'); if (conta.telegram) { clearInterval(iv); render(); confete(); toast('✅ Telegram conectado!'); } } catch(e){} if (Date.now() - t0 > 5 * 60e3) clearInterval(iv); }, 4000); } catch(e){ if (w) w.close(); toast(e.message); } };
   const tgOff = $('#tg-off'); if (tgOff) tgOff.onclick = () => confirmar('Desconectar o Telegram? Você para de receber lembretes por lá.', async () => { try { await api('/api/telegram/desligar', {}); conta.telegram = false; render(); toast('Telegram desconectado'); } catch(e){ toast(e.message); } });
   const ab = $('#adm-busca'); if (ab) ab.oninput = () => { view.admBusca = ab.value; const pos = ab.selectionStart; render(); const n = $('#adm-busca'); n.focus(); n.setSelectionRange(pos, pos); };
@@ -1625,7 +1652,19 @@ function bind(){
   const bd = $('#bk-demo'); if (bd) bd.onclick = () => confirmar('Carregar os dados de exemplo? Seus dados atuais serão substituídos.', () => { S = exemplo(); save(); go('inicio'); });
   const bz = $('#bk-zero'); if (bz) bz.onclick = () => confirmar('Apagar tudo e começar do zero?', () => { S = C.estadoVazio(); save(); onboarding(); });
 }
-const num = (v) => { if (typeof v === 'number') return v; const s = String(v || '').trim().replace(/[^\d,.-]/g, ''); if (!s) return 0; const n = /,/.test(s) ? s.replace(/\./g, '').replace(',', '.') : s; return Math.round(parseFloat(n) * 100) / 100 || 0; };
+const num = (v) => { if (typeof v === 'number') return Math.min(v, C.LIMITE_VALOR); const s = String(v || '').trim().replace(/[^\d,.-]/g, ''); if (!s) return 0; const n = /,/.test(s) ? s.replace(/\./g, '').replace(',', '.') : (/^\d{1,3}(\.\d{3})+$/.test(s) ? s.replace(/\./g, '') : s); return Math.min(Math.round(parseFloat(n) * 100) / 100 || 0, C.LIMITE_VALOR); };
+// limites: textos até 150 caracteres; valores até R$ 99.000.000,00
+function limitarCampos(root){
+  (root || document).querySelectorAll('input, textarea').forEach((i) => {
+    const tipo = (i.getAttribute('type') || 'text').toLowerCase();
+    if (['password', 'date', 'time', 'month', 'number', 'color', 'checkbox', 'file', 'hidden'].includes(tipo) || i.readOnly) return;
+    if (i.getAttribute('inputmode') === 'decimal') {
+      i.maxLength = 15;
+      if (!i.dataset.lim) { i.dataset.lim = '1'; i.dataset.ok = i.value; i.addEventListener('input', () => { const v = String(i.value).replace(/[^\d,.]/g, ''); const n = /,/.test(v) ? parseFloat(v.replace(/\./g, '').replace(',', '.')) : parseFloat(v.replace(/\.(?=\d{3}(\D|$))/g, '')); if (n > C.LIMITE_VALOR) { i.value = i.dataset.ok; toast('O valor máximo é R$ 99.000.000,00'); } else i.dataset.ok = i.value; }); }
+    } else if (!i.maxLength || i.maxLength < 0 || i.maxLength > 150) i.maxLength = (i.id === 'ln-s' || i.id === 'ln-s2') ? 128 : 150;
+  });
+  (root || document).querySelectorAll('input[inputmode="tel"]').forEach((i) => { i.maxLength = 20; });
+}
 function confirmar(msg, ok){ sheet('<h3>Tem certeza?</h3><p>' + esc(msg) + '</p><div class="btnrow"><button class="btn ghost" id="cf-n">Cancelar</button><button class="btn danger" id="cf-s">Sim, continuar</button></div>', () => { $('#cf-n').onclick = fechar; $('#cf-s').onclick = () => { fechar(); ok(); }; }); }
 function baixarArquivo(nome, txt){ const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([txt], { type: 'application/json' })); a.download = nome; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); }
 function backupExport(){
@@ -1782,7 +1821,8 @@ async function gravar(){
 function pararVoz(){ try { rec && rec.stop(); } catch(e){} try { gravador && gravador.state === 'recording' && gravador.stop(); } catch(e){} }
 const ROTULO = { pagar_fatura: '💳 Pagar fatura', config_cartao: '💳 Ajustar cartão', resgate: '💸 Retirar do sonho', gasto: '🛒 Gasto', entrada: '💰 Entrada', parcelado: '🛍️ Compra parcelada', conta: '🧾 Conta fixa', compromisso: '📌 Compromisso', sonho: '⭐ Guardar para sonho', excluir: '🗑️ Excluir', desfazer: '↩️ Desfazer', pagar_conta: '✅ Conta paga' };
 function previa(frase, origem){
-  const a = C.interpretar(frase, { hoje: hoje(), categorias: S.categorias, sonhos: S.sonhos, cartoes: S.cartoes });
+  const a = C.interpretar(String(frase).slice(0, 150), { hoje: hoje(), categorias: S.categorias, sonhos: S.sonhos, cartoes: S.cartoes });
+  if ((a.valor && a.valor > C.LIMITE_VALOR) || (a.valorParcela && a.valorParcela > C.LIMITE_VALOR)) { const box0 = $('#vz-res'); if (box0) box0.innerHTML = '<div class="result" style="border-color:var(--bad)"><div class="msg">🙈 O valor máximo é R$ 99.000.000,00. Confere o valor pra mim?</div></div>'; return; }
   const box = $('#vz-res'); if (!box) return;
   if (['resumo', 'contas_pendentes', 'agenda_hoje', 'ajuda', 'desconhecido', 'ver_fatura'].includes(a.tipo)) { const r = C.aplicar(S, a, { hoje: hoje() }); box.innerHTML = '<div class="result" style="border-color:var(--sky)"><div class="msg">' + fmtWa(r.msg) + '</div></div>'; return; }
   let det = '';
@@ -1840,6 +1880,7 @@ function telaEntrar(modo){
   else corpo = (modo === 'criar' ? '<input id="ln-n" placeholder="Seu nome ou da família" autocomplete="name"><input id="ln-f" inputmode="tel" placeholder="Seu WhatsApp com DDD" autocomplete="tel"><input id="ln-e" type="email" inputmode="email" placeholder="Seu e-mail" autocomplete="email">' : '<input id="ln-f" placeholder="WhatsApp com DDD ou e-mail" autocomplete="username" value="' + esc(infoAcesso ? infoAcesso.fone.replace(/^55/, '') : '') + '">') + campoSenha('ln-s', modo === 'criar' ? 'Crie uma senha (mín. 6 caracteres)' : 'Sua senha', modo === 'criar' ? 'new-password' : 'current-password') + (modo === 'criar' ? campoSenha('ln-s2', 'Repita a senha', 'new-password') : '');
   L.innerHTML = '<div class="ob" role="dialog" aria-modal="true"><form class="box" id="ln-form" novalidate><span class="logo" style="width:64px;height:64px;border-radius:20px;background:var(--sun);display:grid;place-items:center">' + LOGO.replace(/22/g, '38') + '</span><h1>Sonhaí</h1><p>' + tit + ' 💙</p>' + (infoAcesso && modo === 'entrar' ? '<div style="background:rgba(255,255,255,.95);color:#13233A;border-radius:14px;padding:12px;font-weight:600">🎉 Olá, <b>' + esc(infoAcesso.nome) + '</b>! Seu acesso está pronto.<br>📅 Plano <b>' + esc(infoAcesso.plano) + '</b>' + (infoAcesso.validade ? ' até <b>' + C.dataBR(infoAcesso.validade) + '</b>' : '') + '.<br>🔑 Entre com a <b>senha inicial</b> que você recebeu. Depois você cria a sua.</div>' : '') + (modo !== 'reset' && cfg.cadastroAberto !== false ? '<div class="seg" style="background:rgba(255,255,255,.14)"><button type="button" data-m="entrar" class="' + (modo === 'entrar' ? 'on' : '') + '" style="color:inherit">Entrar</button><button type="button" data-m="criar" class="' + (modo === 'criar' ? 'on' : '') + '" style="color:inherit">Criar conta' + ' <small style="font-weight:600;opacity:.8">(7 dias grátis)</small></button></div>' : '') + corpo + '<div id="ln-erro" role="alert" style="background:#FFE9E5;color:#B42318;border-radius:12px;padding:10px 12px;font-weight:700" hidden></div><button class="btn sun block" type="submit" style="font-size:18px" id="ln-ok">' + ({ entrar: 'Entrar', criar: 'Criar minha conta ✨', reset: 'Salvar nova senha' })[modo] + '</button>' + (modo === 'entrar' ? '<button type="button" class="btn block" id="ln-esq" style="background:transparent;color:inherit;text-decoration:underline">Esqueci minha senha</button>' : '') + botaoInstalar('background:rgba(255,255,255,.14);color:inherit') + '<p style="font-size:13px;opacity:.8">🔒 Sua senha é guardada criptografada. Seus dados são só seus.</p></form></div>';
   L.querySelectorAll('[data-m]').forEach((b) => b.onclick = () => telaEntrar(b.dataset.m));
+  limitarCampos(L);
   L.querySelectorAll('[data-ver]').forEach((b) => b.onclick = () => { const i = $('#' + b.dataset.ver); i.type = i.type === 'password' ? 'text' : 'password'; });
   const erro = (m) => { const e = $('#ln-erro'); e.textContent = m; e.hidden = !m; };
   const esq = $('#ln-esq'); if (esq) esq.onclick = () => erro('') || sheet('<h3>🔐 Esqueci minha senha</h3><p>Mande a mensagem <b>esqueci minha senha</b> para o Sonhaí no WhatsApp' + (cfg.whatsapp ? ' (<b>' + esc(cfg.whatsapp) + '</b>)' : '') + '. Você vai receber um link para criar uma senha nova.</p><button class="btn pri block" id="esq-ok">Entendi</button>', () => { $('#esq-ok').onclick = fechar; });

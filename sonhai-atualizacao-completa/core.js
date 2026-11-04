@@ -461,8 +461,33 @@
 
   // ------------------------------------------------------------- aplicar ação
   /** Aplica a ação interpretada ao estado. Retorna { ok, msg, item, colecao }. */
+  // ------------------------------------------------------------------ limites
+  const LIMITE_VALOR = 99000000;
+  const LIMITE_TEXTO = 150;
+  const CAMPOS_VALOR = ['valor', 'custo', 'limite', 'saldo', 'parcela', 'guardadoAntes', 'orcamento', 'saldoInicial', 'pago'];
+  /** Corta textos em 150 caracteres e prende valores entre -99 milhões e 99 milhões (em qualquer item). */
+  function sanearItem(o, prof) {
+    if (!o || typeof o !== 'object' || (prof || 0) > 4) return o;
+    for (const k of Object.keys(o)) {
+      const v = o[k];
+      if (typeof v === 'string' && k !== 'id' && k !== 'txt') o[k] = v.slice(0, LIMITE_TEXTO);
+      else if (typeof v === 'number' && CAMPOS_VALOR.includes(k)) o[k] = !isFinite(v) ? 0 : Math.max(-LIMITE_VALOR, Math.min(LIMITE_VALOR, Math.round(v * 100) / 100));
+      else if (v && typeof v === 'object') sanearItem(v, (prof || 0) + 1);
+    }
+    return o;
+  }
+  function sanearEstado(estado) {
+    if (!estado || typeof estado !== 'object') return estado;
+    for (const col of ['lancamentos', 'contas', 'parcelados', 'cartoes', 'anuais', 'sonhos', 'dividas', 'agenda', 'categorias']) if (Array.isArray(estado[col])) estado[col].forEach((x) => sanearItem(x));
+    if (estado.perfil) sanearItem(estado.perfil);
+    if (Array.isArray(estado.chat)) estado.chat = estado.chat.slice(-200).map((m) => ({ de: m.de === 'me' ? 'me' : 'bot', txt: String(m.txt || '').slice(0, 4000), em: +m.em || 0 }));
+    return estado;
+  }
+
   function aplicar(estado, acao, opts) {
     opts = opts || {};
+    for (const k of ['valor', 'valorParcela']) if (acao && typeof acao[k] === 'number' && Math.abs(acao[k]) > LIMITE_VALOR) return { ok: false, msg: '🙈 O valor máximo é R$ 99.000.000,00. Confere o valor pra mim?' };
+    for (const k of ['desc', 'titulo', 'nome', 'termo']) if (acao && typeof acao[k] === 'string') acao[k] = acao[k].slice(0, LIMITE_TEXTO);
     const origem = opts.origem || 'app';
     const hoje = opts.hoje || new Date();
     const now = Date.now();
@@ -829,7 +854,7 @@
 
   return {
     CATEGORIAS, TIPOS_ENTRADA, INCENTIVOS, MESES, sem, uid, iso, pad, brl, dataBR, mesDe, nomeMes, mesCurto, somaMes, difMeses, diasNoMes, agora,
-    BANCOS, detectarCartao, garantirCartao, mesFatura, fatura, pagarFatura, faturasAVencer, rotuloFatura,
+    LIMITE_VALOR, LIMITE_TEXTO, sanearEstado, BANCOS, detectarCartao, garantirCartao, mesFatura, fatura, pagarFatura, faturasAVencer, rotuloFatura,
     conversar, interpretar, aplicar, remover, acharSonho, retirarDoSonho, estadoVazio, resumoMes, mesesComDados, parcelaNoMes, contaNoMes, contasAVencer, contasAtrasadas, totalSonho,
     textoResumo, textoContas, textoAgenda, textoAjuda, mensagemHumor, barra, mesclar, adivinharCategoria, extrairValor, extrairData, extrairHora
   };

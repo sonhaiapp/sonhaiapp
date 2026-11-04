@@ -354,6 +354,7 @@ async function receber(fone, texto, origemAudio) {
 }
 /** Entende o pedido (texto já transcrito) e responde pelo mesmo canal. */
 async function processar(u, texto, origemAudio, canal) {
+  texto = String(texto || '').slice(0, 500);
   const env = (msg, o) => enviar(u, msg, Object.assign({ canal }, o || {}));
   if (u.bloqueado) return env('Seu acesso está suspenso. Fale com o suporte do Sonhaí.');
   if (expirado(u)) return env(msgExpirado(u));
@@ -670,7 +671,7 @@ const servidor = http.createServer(async (req, res) => {
       u.senha = hashSenha(b.senha); u.estado.perfil.nome = nome; u.estado.perfilUpd = Date.now();
       u.email = email; u.criadoPor = 'cadastro';
       if (!ehAdmin(u)) { u.plano = (DB.config && DB.config.planoCadastro) || 'gratis'; u.validade = calcValidade(u.plano); }
-      if (b.estado && typeof b.estado === 'object' && !b.estado.demo) { u.estado = CC.mesclar(u.estado, b.estado); u.estado.perfil.nome = nome; u.estado.perfil.whatsapp = fone; }
+      if (b.estado && typeof b.estado === 'object' && !b.estado.demo) { u.estado = CC.sanearEstado(CC.mesclar(u.estado, b.estado)); u.estado.perfil.nome = nome; u.estado.perfil.whatsapp = fone; }
       if (!DEMO) { u.verificado = false; u.codigo = codigoVerif(); }
       salvarDB();
       return json(res, 200, { token: novaSessao(u), verificado: u.verificado !== false, codigo: u.codigo || '' });
@@ -726,7 +727,7 @@ const servidor = http.createServer(async (req, res) => {
       if (req.method === 'PUT') {
         const { estado } = JSON.parse((await lerCorpo(req, 5 * 1024 * 1024)).toString());
         const chat = u.estado.chat;
-        u.estado = CC.mesclar(estado, u.estado); u.estado.chat = chat; delete u.estado.demo; u.rev++; salvarDB();
+        u.estado = CC.sanearEstado(CC.mesclar(estado, u.estado)); u.estado.chat = chat; delete u.estado.demo; u.rev++; salvarDB();
         return json(res, 200, { estado: u.estado, rev: u.rev });
       }
     }
