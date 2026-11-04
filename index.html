@@ -81,6 +81,9 @@ h1,h2,h3{font-family:var(--f-display);line-height:1.1;margin:0;text-wrap:balance
 .meter .fill{height:100%;border-radius:999px;transition:width .6s cubic-bezier(.2,.8,.2,1)}
 .meter .legend{display:flex;justify-content:space-between;font-size:13px;color:var(--ink-2);margin-top:6px;gap:8px;flex-wrap:wrap}
 
+.versiculo{background:linear-gradient(135deg,var(--tile-bal),var(--tile-dream))}
+.versiculo .vtxt{font-family:var(--f-display);font-size:19px;font-weight:600;line-height:1.35;margin:0}
+.versiculo .vref{margin:6px 0 0;font-weight:800;color:var(--ink-2);font-size:14px}
 .olho{border:0;background:var(--surface-2);color:var(--ink);width:42px;height:42px;border-radius:14px;display:grid;place-items:center;flex:none}
 .disp{margin-top:8px;font-size:15px}
 .voltar{width:42px;height:42px;border-radius:14px;border:0;background:rgba(255,255,255,.16);color:inherit;font-size:26px;line-height:1;display:grid;place-items:center;flex:none;margin-right:8px}
@@ -1099,6 +1102,48 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
     'Viver bem e guardar dinheiro andam juntos. Você está no caminho certo! 🌻'
   ];
 
+  // ------------------------------------------------------------ palavra do dia
+  const VERSICULOS = [
+    ['Entrega o teu caminho ao Senhor; confia nele, e ele tudo fará.', 'Salmos 37:5'],
+    ['Tudo posso naquele que me fortalece.', 'Filipenses 4:13'],
+    ['O meu Deus, segundo as suas riquezas, suprirá todas as vossas necessidades em glória, por Cristo Jesus.', 'Filipenses 4:19'],
+    ['Confia ao Senhor as tuas obras, e teus pensamentos serão estabelecidos.', 'Provérbios 16:3'],
+    ['Os pensamentos do diligente tendem só à abundância.', 'Provérbios 21:5'],
+    ['Lança o teu cuidado sobre o Senhor, e ele te susterá.', 'Salmos 55:22'],
+    ['O Senhor é o meu pastor; nada me faltará.', 'Salmos 23:1'],
+    ['Eu é que sei que pensamentos tenho a vosso respeito, diz o Senhor; pensamentos de paz e não de mal, para vos dar o fim que desejais.', 'Jeremias 29:11'],
+    ['Buscai primeiro o Reino de Deus, e a sua justiça, e todas essas coisas vos serão acrescentadas.', 'Mateus 6:33'],
+    ['Não estejais inquietos por coisa alguma; antes, as vossas petições sejam em tudo conhecidas diante de Deus, pela oração e súplica, com ação de graças.', 'Filipenses 4:6'],
+    ['A bênção do Senhor é que enriquece, e ele não lhe acrescenta dores.', 'Provérbios 10:22'],
+    ['Honra ao Senhor com a tua fazenda e com as primícias de toda a tua renda.', 'Provérbios 3:9'],
+    ['Confia no Senhor de todo o teu coração e não te estribes no teu próprio entendimento.', 'Provérbios 3:5'],
+    ['Os que esperam no Senhor renovarão as suas forças.', 'Isaías 40:31'],
+    ['Esforça-te e tem bom ânimo; não temas, nem te espantes, porque o Senhor, teu Deus, é contigo por onde quer que andares.', 'Josué 1:9'],
+    ['Deleita-te também no Senhor, e ele te concederá o que deseja o teu coração.', 'Salmos 37:4'],
+    ['Quem é fiel no mínimo também é fiel no muito.', 'Lucas 16:10'],
+    ['Vai ter com a formiga, ó preguiçoso; olha para os seus caminhos e sê sábio. Ela prepara no verão o seu pão.', 'Provérbios 6:6,8'],
+    ['Tesouro desejável e azeite há na casa do sábio, mas o homem insensato os devora.', 'Provérbios 21:20'],
+    ['Sejam vossos costumes sem avareza, contentando-vos com o que tendes.', 'Hebreus 13:5'],
+    ['Deus é o nosso refúgio e fortaleza, socorro bem presente na angústia.', 'Salmos 46:1'],
+    ['Sabemos que todas as coisas contribuem juntamente para o bem daqueles que amam a Deus.', 'Romanos 8:28'],
+    ['Cada um contribua segundo propôs no seu coração, não com tristeza ou por necessidade, porque Deus ama ao que dá com alegria.', '2 Coríntios 9:7'],
+    ['Não nos cansemos de fazer o bem, porque a seu tempo ceifaremos, se não houvermos desfalecido.', 'Gálatas 6:9'],
+    ['O choro pode durar uma noite, mas a alegria vem pela manhã.', 'Salmos 30:5'],
+    ['O Senhor te abençoe e te guarde.', 'Números 6:24'],
+    ['Com a sabedoria se edifica a casa, e com o entendimento ela se estabelece.', 'Provérbios 24:3'],
+    ['Qual de vós, querendo edificar uma torre, não se assenta primeiro a fazer as contas dos gastos, para ver se tem com que a acabar?', 'Lucas 14:28'],
+    ['Melhor é o pouco com o temor do Senhor do que um grande tesouro onde há inquietação.', 'Provérbios 15:16'],
+    ['Lâmpada para os meus pés é tua palavra e luz, para o meu caminho.', 'Salmos 119:105'],
+    ['Este é o dia que fez o Senhor; regozijemo-nos e alegremo-nos nele.', 'Salmos 118:24']
+  ];
+  /** Um versículo por dia (o mesmo para todos no mesmo dia). */
+  function versiculoDoDia(data) {
+    const d = data || new Date();
+    const n = Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 864e5);
+    const v = VERSICULOS[n % VERSICULOS.length];
+    return { texto: v[0], ref: v[1] };
+  }
+
   // ---------------------------------------------------------------- mesclagem
   const COLECOES = ['lancamentos', 'contas', 'parcelados', 'cartoes', 'anuais', 'sonhos', 'dividas', 'agenda', 'categorias'];
   /** Junta dois estados (celular e servidor) sem perder o que veio do WhatsApp. */
@@ -1123,7 +1168,7 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
 
   return {
     CATEGORIAS, TIPOS_ENTRADA, INCENTIVOS, MESES, sem, uid, iso, pad, brl, dataBR, mesDe, nomeMes, mesCurto, somaMes, difMeses, diasNoMes, agora,
-    LIMITE_VALOR, LIMITE_TEXTO, sanearEstado, BANCOS, detectarCartao, garantirCartao, mesFatura, fatura, pagarFatura, faturasAVencer, rotuloFatura,
+    VERSICULOS, versiculoDoDia, LIMITE_VALOR, LIMITE_TEXTO, sanearEstado, BANCOS, detectarCartao, garantirCartao, mesFatura, fatura, pagarFatura, faturasAVencer, rotuloFatura,
     conversar, interpretar, aplicar, remover, acharSonho, retirarDoSonho, estadoVazio, resumoMes, mesesComDados, parcelaNoMes, contaNoMes, contasAVencer, contasAtrasadas, totalSonho,
     textoResumo, textoContas, textoAgenda, textoAjuda, mensagemHumor, barra, mesclar, adivinharCategoria, extrairValor, extrairData, extrairHora
   };
@@ -1561,11 +1606,12 @@ TELAS.ajustes = function(){
   h += '<div class="field"><label for="aj-nome">Seu nome (ou da família)</label><input id="aj-nome" value="' + esc(p.nome) + '"></div>';
   h += '<div class="grid2"><div class="field"><label for="aj-orc">Orçamento do mês (R$)</label><input id="aj-orc" inputmode="decimal" value="' + (p.orcamento || '') + '" placeholder="Ex.: 6000"></div><div class="field"><label for="aj-saldo">Saldo no início (R$)</label><input id="aj-saldo" inputmode="decimal" value="' + (p.saldoInicial || '') + '"></div></div>';
   h += '<div class="grid2"><div class="field"><label for="aj-hora">Hora do lembrete</label><input id="aj-hora" type="time" value="' + esc(p.lembreteHora || '08:00') + '"></div><div class="field"><label for="aj-tema">Tema</label><select id="aj-tema"><option value="auto">Automático</option><option value="light">Claro</option><option value="dark">Escuro</option></select></div></div>';
+  h += '<label class="item" style="cursor:pointer"><input type="checkbox" id="aj-vers" ' + (S.perfil.versiculo !== false ? 'checked' : '') + ' style="width:22px;height:22px"><span class="mid"><span class="ttl">📖 Palavra do dia</span><span class="meta">Um versículo bíblico para animar o seu dia (no app e no lembrete da manhã)</span></span></label>';
   h += '<div class="note">Sem orçamento definido, o app usa o que entrou no mês como limite.</div><button class="btn pri block" style="margin-top:12px" id="aj-salvar">Salvar</button></section>';
   h += '<section class="card"><h2 style="margin-bottom:10px">🏷️ Categorias e limites</h2><div class="sub" style="margin-bottom:8px">Toque para mudar o emoji, o nome ou colocar um limite mensal. Eu aviso quando passar.</div><div class="list">' + S.categorias.map((c, i) => '<button class="item" data-edit-cat="' + i + '"><span class="ico" style="background:' + soft(c.cor) + '">' + c.emoji + '</span><span class="mid"><span class="ttl">' + esc(c.nome) + '</span><span class="meta">' + (c.limite ? 'Limite ' + brl(c.limite) : 'Sem limite') + '</span></span></button>').join('') + '</div><button class="btn ghost block" style="margin-top:8px" data-novo="categoria">+ Nova categoria</button></section>';
   h += '<section class="card"><h2 style="margin-bottom:10px">💾 Meus dados no aparelho</h2><div class="btnrow"><button class="btn ghost" id="bk-exp">⬇️ Copiar backup</button><label class="btn ghost" for="bk-imp">⬆️ Importar backup</label><input id="bk-imp" type="file" accept=".json,application/json" hidden></div>' + (SERVER ? '' : '<div class="btnrow" style="margin-top:8px"><button class="btn ghost" id="bk-demo">🧪 Ver exemplo</button><button class="btn danger" id="bk-zero">🧹 Começar do zero</button></div>') + '<div id="bk-out"></div></section>';
   h += blocoConta();
-  h += '<p class="sub" style="text-align:center">Sonhaí · versão 1.5 (04/11) · feito com 💙 para ajudar famílias</p>';
+  h += '<p class="sub" style="text-align:center">Sonhaí · versão 1.6 (04/11) · feito com 💙 para ajudar famílias</p>';
   return h;
 };
 
@@ -1585,7 +1631,7 @@ function render(){
   h += t === 'inicio' ? '<div class="hello">' + saudacao() + '<b>' + esc(nome || 'Que bom te ver!') + ' 👋</b></div>' : '<div class="hello comvoltar"><button class="voltar" id="voltar" aria-label="Voltar">‹</button><b>' + esc(TITULOS[t] || '') + '</b></div>';
   h += '</header>';
   if (S.demo && !SERVER) h += '<div class="demo" role="note"><span>🧪 Você está vendo dados de exemplo.</span><button id="sair-demo">Começar o meu</button></div>';
-  h += '<main class="content wrap">' + (t === 'inicio' ? avisoPlano() + avisoVerificar() : '') + (TELAS[t] || TELAS.inicio)() + '</main>';
+  h += '<main class="content wrap">' + (t === 'inicio' ? avisoPlano() + avisoVerificar() + palavraDoDia() : '') + (TELAS[t] || TELAS.inicio)() + '</main>';
   $('#app').innerHTML = h;
   const navs = [['inicio', '🏠', 'Início'], ['gastos', '📋', 'Gastos'], ['mic'], ['agenda', '📌', 'Agenda'], ['mais', '☰', 'Mais']];
   $('#nav').innerHTML = navs.map((n) => n[0] === 'mic' ? '<div class="micwrap"><button class="mic" id="fab" aria-label="Falar um gasto">🎤</button><small>Falar</small></div>' : '<button class="' + (t === n[0] || (n[0] === 'mais' && !['inicio', 'gastos', 'agenda'].includes(t)) ? 'on' : '') + '" data-go="' + n[0] + '"><span class="i">' + n[1] + '</span>' + n[2] + '</button>').join('');
@@ -1641,12 +1687,13 @@ function bind(){
   const ctd = $('#ct-todos'); if (ctd) ctd.onclick = () => confirmar('Sair da conta em todos os aparelhos (celular, computador…)?', () => sair(true));
   $('#fab').onclick = abrirVoz;
   const vb = $('#voltar'); if (vb) vb.onclick = voltar;
+  const vx = $('#vers-x'); if (vx) vx.onclick = () => { try { localStorage.setItem('cc-versiculo', hojeISO()); } catch(e){} render(); };
   const ol = $('#olho'); if (ol) ol.onclick = alternarOculto;
   // whatsapp
   const wf = $('#wa-form'); if (wf) wf.onsubmit = (e) => { e.preventDefault(); const t = $('#wa-txt').value.trim(); if (!t) return; conversar(t); };
   const wn = $('#wa-num'); if (wn) wn.onchange = () => { S.perfil.whatsapp = wn.value.trim(); S.perfilUpd = Date.now(); save(); toast('📱 Número salvo'); };
   // ajustes
-  const as = $('#aj-salvar'); if (as) { $('#aj-tema').value = S.perfil.tema || 'auto'; as.onclick = () => { const p = S.perfil; p.nome = $('#aj-nome').value.trim(); p.orcamento = num($('#aj-orc').value); p.saldoInicial = num($('#aj-saldo').value); p.lembreteHora = $('#aj-hora').value || '08:00'; p.tema = $('#aj-tema').value; S.perfilUpd = Date.now(); save(); toast('💾 Tudo salvo!'); }; }
+  const as = $('#aj-salvar'); if (as) { $('#aj-tema').value = S.perfil.tema || 'auto'; as.onclick = () => { const p = S.perfil; p.nome = $('#aj-nome').value.trim(); p.orcamento = num($('#aj-orc').value); p.saldoInicial = num($('#aj-saldo').value); p.lembreteHora = $('#aj-hora').value || '08:00'; p.tema = $('#aj-tema').value; p.versiculo = $('#aj-vers').checked; S.perfilUpd = Date.now(); save(); toast('💾 Tudo salvo!'); }; }
   const be = $('#bk-exp'); if (be) be.onclick = backupExport;
   const bi = $('#bk-imp'); if (bi) bi.onchange = () => { const f = bi.files[0]; if (!f) return; const fr = new FileReader(); fr.onload = () => { try { const j = JSON.parse(fr.result); if (!j.lancamentos) throw 0; S = j; delete S.demo; S.perfilUpd = Date.now(); save(); toast('✅ Dados importados! Bem-vindo(a) de volta.'); confete(); go('inicio'); } catch(e){ toast('Esse arquivo não parece um backup do Sonhaí.'); } }; fr.readAsText(f); };
   const bd = $('#bk-demo'); if (bd) bd.onclick = () => confirmar('Carregar os dados de exemplo? Seus dados atuais serão substituídos.', () => { S = exemplo(); save(); go('inicio'); });
@@ -1921,6 +1968,13 @@ function blocoConta(){
   if (!SERVER) return '<section class="card"><h2 style="margin-bottom:8px">🔐 Minha conta</h2><div class="note">Nesta demonstração os dados ficam só neste aparelho. No app publicado você entra com <b>WhatsApp + senha</b> e seus dados ficam protegidos e sincronizados entre aparelhos.</div></section>';
   if (!conta) return '';
   return '<section class="card"><h2 style="margin-bottom:8px">🔐 Minha conta</h2><div class="list"><div class="item"><span class="ico" style="background:var(--tile-in)">📱</span><span class="mid"><span class="ttl">+' + esc(conta.fone) + '</span><span class="meta">' + (conta.verificado ? 'WhatsApp confirmado ✓' : 'WhatsApp aguardando confirmação') + '</span></span></div>' + (conta.email ? '<div class="item"><span class="ico" style="background:var(--tile-bal)">✉️</span><span class="mid"><span class="ttl">' + esc(conta.email) + '</span><span class="meta">E-mail de acesso</span></span></div>' : '') + '<div class="item"><span class="ico" style="background:var(--tile-dream)">📅</span><span class="mid"><span class="ttl">Plano ' + esc(conta.planoNome || 'Ilimitado') + '</span><span class="meta">' + (conta.validade ? 'Válido até ' + C.dataBR(conta.validade) + ' (' + conta.dias + ' dias)' : 'Sem data de vencimento') + '</span></span></div></div>' + botaoInstalar('background:var(--surface-2);margin-top:8px') + '<div class="btnrow" style="margin-top:8px"><button class="btn ghost" id="ct-senha">🔑 ' + (conta.temSenha ? 'Trocar senha' : 'Criar senha') + '</button><button class="btn ghost" id="ct-sair">🚪 Sair</button></div><button class="btn danger block" style="margin-top:8px" id="ct-todos">Sair de todos os aparelhos</button></section>';
+}
+function palavraDoDia(){
+  if (S.perfil.versiculo === false) return '';
+  let fechado = ''; try { fechado = localStorage.getItem('cc-versiculo') || ''; } catch(e){}
+  if (fechado === hojeISO()) return '';
+  const v = C.versiculoDoDia(hoje());
+  return '<section class="card versiculo" aria-label="Palavra do dia"><div class="cardhead" style="margin-bottom:6px"><h2 style="font-size:17px">📖 Palavra do dia</h2><button class="iconbtn" id="vers-x" style="background:transparent;color:var(--ink-2);width:32px;height:32px" aria-label="Fechar por hoje">✕</button></div><p class="vtxt">“' + esc(v.texto) + '”</p><p class="vref">' + esc(v.ref) + '</p></section>';
 }
 function avisoPlano(){
   if (!conta || conta.dias == null || conta.dias > 5) return '';

@@ -830,6 +830,48 @@
     'Viver bem e guardar dinheiro andam juntos. Você está no caminho certo! 🌻'
   ];
 
+  // ------------------------------------------------------------ palavra do dia
+  const VERSICULOS = [
+    ['Entrega o teu caminho ao Senhor; confia nele, e ele tudo fará.', 'Salmos 37:5'],
+    ['Tudo posso naquele que me fortalece.', 'Filipenses 4:13'],
+    ['O meu Deus, segundo as suas riquezas, suprirá todas as vossas necessidades em glória, por Cristo Jesus.', 'Filipenses 4:19'],
+    ['Confia ao Senhor as tuas obras, e teus pensamentos serão estabelecidos.', 'Provérbios 16:3'],
+    ['Os pensamentos do diligente tendem só à abundância.', 'Provérbios 21:5'],
+    ['Lança o teu cuidado sobre o Senhor, e ele te susterá.', 'Salmos 55:22'],
+    ['O Senhor é o meu pastor; nada me faltará.', 'Salmos 23:1'],
+    ['Eu é que sei que pensamentos tenho a vosso respeito, diz o Senhor; pensamentos de paz e não de mal, para vos dar o fim que desejais.', 'Jeremias 29:11'],
+    ['Buscai primeiro o Reino de Deus, e a sua justiça, e todas essas coisas vos serão acrescentadas.', 'Mateus 6:33'],
+    ['Não estejais inquietos por coisa alguma; antes, as vossas petições sejam em tudo conhecidas diante de Deus, pela oração e súplica, com ação de graças.', 'Filipenses 4:6'],
+    ['A bênção do Senhor é que enriquece, e ele não lhe acrescenta dores.', 'Provérbios 10:22'],
+    ['Honra ao Senhor com a tua fazenda e com as primícias de toda a tua renda.', 'Provérbios 3:9'],
+    ['Confia no Senhor de todo o teu coração e não te estribes no teu próprio entendimento.', 'Provérbios 3:5'],
+    ['Os que esperam no Senhor renovarão as suas forças.', 'Isaías 40:31'],
+    ['Esforça-te e tem bom ânimo; não temas, nem te espantes, porque o Senhor, teu Deus, é contigo por onde quer que andares.', 'Josué 1:9'],
+    ['Deleita-te também no Senhor, e ele te concederá o que deseja o teu coração.', 'Salmos 37:4'],
+    ['Quem é fiel no mínimo também é fiel no muito.', 'Lucas 16:10'],
+    ['Vai ter com a formiga, ó preguiçoso; olha para os seus caminhos e sê sábio. Ela prepara no verão o seu pão.', 'Provérbios 6:6,8'],
+    ['Tesouro desejável e azeite há na casa do sábio, mas o homem insensato os devora.', 'Provérbios 21:20'],
+    ['Sejam vossos costumes sem avareza, contentando-vos com o que tendes.', 'Hebreus 13:5'],
+    ['Deus é o nosso refúgio e fortaleza, socorro bem presente na angústia.', 'Salmos 46:1'],
+    ['Sabemos que todas as coisas contribuem juntamente para o bem daqueles que amam a Deus.', 'Romanos 8:28'],
+    ['Cada um contribua segundo propôs no seu coração, não com tristeza ou por necessidade, porque Deus ama ao que dá com alegria.', '2 Coríntios 9:7'],
+    ['Não nos cansemos de fazer o bem, porque a seu tempo ceifaremos, se não houvermos desfalecido.', 'Gálatas 6:9'],
+    ['O choro pode durar uma noite, mas a alegria vem pela manhã.', 'Salmos 30:5'],
+    ['O Senhor te abençoe e te guarde.', 'Números 6:24'],
+    ['Com a sabedoria se edifica a casa, e com o entendimento ela se estabelece.', 'Provérbios 24:3'],
+    ['Qual de vós, querendo edificar uma torre, não se assenta primeiro a fazer as contas dos gastos, para ver se tem com que a acabar?', 'Lucas 14:28'],
+    ['Melhor é o pouco com o temor do Senhor do que um grande tesouro onde há inquietação.', 'Provérbios 15:16'],
+    ['Lâmpada para os meus pés é tua palavra e luz, para o meu caminho.', 'Salmos 119:105'],
+    ['Este é o dia que fez o Senhor; regozijemo-nos e alegremo-nos nele.', 'Salmos 118:24']
+  ];
+  /** Um versículo por dia (o mesmo para todos no mesmo dia). */
+  function versiculoDoDia(data) {
+    const d = data || new Date();
+    const n = Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 864e5);
+    const v = VERSICULOS[n % VERSICULOS.length];
+    return { texto: v[0], ref: v[1] };
+  }
+
   // ---------------------------------------------------------------- mesclagem
   const COLECOES = ['lancamentos', 'contas', 'parcelados', 'cartoes', 'anuais', 'sonhos', 'dividas', 'agenda', 'categorias'];
   /** Junta dois estados (celular e servidor) sem perder o que veio do WhatsApp. */
@@ -854,7 +896,7 @@
 
   return {
     CATEGORIAS, TIPOS_ENTRADA, INCENTIVOS, MESES, sem, uid, iso, pad, brl, dataBR, mesDe, nomeMes, mesCurto, somaMes, difMeses, diasNoMes, agora,
-    LIMITE_VALOR, LIMITE_TEXTO, sanearEstado, BANCOS, detectarCartao, garantirCartao, mesFatura, fatura, pagarFatura, faturasAVencer, rotuloFatura,
+    VERSICULOS, versiculoDoDia, LIMITE_VALOR, LIMITE_TEXTO, sanearEstado, BANCOS, detectarCartao, garantirCartao, mesFatura, fatura, pagarFatura, faturasAVencer, rotuloFatura,
     conversar, interpretar, aplicar, remover, acharSonho, retirarDoSonho, estadoVazio, resumoMes, mesesComDados, parcelaNoMes, contaNoMes, contasAVencer, contasAtrasadas, totalSonho,
     textoResumo, textoContas, textoAgenda, textoAjuda, mensagemHumor, barra, mesclar, adivinharCategoria, extrairValor, extrairData, extrairHora
   };

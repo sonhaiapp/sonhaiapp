@@ -435,7 +435,9 @@ function textoManha(u, hoje) {
     const pct = Math.round(CC.totalSonho(s) / s.custo * 100);
     linhas.push(''); linhas.push(`⭐ Seu sonho *${s.nome}* está em ${pct}%. ${CC.INCENTIVOS[hoje.getDate() % CC.INCENTIVOS.length]}`);
   }
-  if (!linhas.length) return '';
+  // sem nada para lembrar, só manda o versículo pelo Telegram (grátis); no WhatsApp cada mensagem tem custo
+  if (!linhas.length && !(u.telegram && e.perfil.versiculo !== false)) return '';
+  if (e.perfil.versiculo !== false) { const v = CC.versiculoDoDia(hoje); if (linhas.length) linhas.push(''); linhas.push(`📖 _"${v.texto}"_ (${v.ref})`); }
   const temConta = venc.length || atras.length || fv.length;
   const h = hoje.getHours(); const sd = h < 12 ? "Bom dia" : h < 18 ? "Boa tarde" : "Boa noite";
   return `${sd}${nome ? ', ' + nome : ''}! ☀️💙\n\n` + linhas.join('\n') + (temConta ? '\n\nQuando pagar, me responda: "paguei a conta de ..." ou "paguei a fatura do ..." (ou "paguei 500 da fatura do ..." se for parcial) ✅' : '');
