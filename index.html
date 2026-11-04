@@ -81,6 +81,11 @@ h1,h2,h3{font-family:var(--f-display);line-height:1.1;margin:0;text-wrap:balance
 .meter .fill{height:100%;border-radius:999px;transition:width .6s cubic-bezier(.2,.8,.2,1)}
 .meter .legend{display:flex;justify-content:space-between;font-size:13px;color:var(--ink-2);margin-top:6px;gap:8px;flex-wrap:wrap}
 
+.olho{border:0;background:var(--surface-2);color:var(--ink);width:42px;height:42px;border-radius:14px;display:grid;place-items:center;flex:none}
+.disp{margin-top:8px;font-size:15px}
+.voltar{width:42px;height:42px;border-radius:14px;border:0;background:rgba(255,255,255,.16);color:inherit;font-size:26px;line-height:1;display:grid;place-items:center;flex:none;margin-right:8px}
+.hello.comvoltar{display:flex;align-items:center}
+.pago{color:var(--good);font-weight:800}
 .tiles{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .tile{border-radius:18px;padding:14px;min-width:0;border:0;text-align:left;display:flex;flex-direction:column;gap:2px}
 .tile .t{font-size:13px;font-weight:800;color:var(--ink-2);display:flex;gap:6px;align-items:center}
@@ -136,7 +141,7 @@ h1,h2,h3{font-family:var(--f-display);line-height:1.1;margin:0;text-wrap:balance
 .quote{background:linear-gradient(135deg,var(--tile-dream),var(--tile-out));border-radius:16px;padding:14px;font-weight:700;display:flex;gap:10px;align-items:center}
 
 /* botões */
-.btn{border:0;border-radius:14px;padding:13px 16px;font-weight:800;font-size:16px;display:inline-flex;align-items:center;justify-content:center;gap:8px}
+.btn{text-decoration:none;border:0;border-radius:14px;padding:13px 16px;font-weight:800;font-size:16px;display:inline-flex;align-items:center;justify-content:center;gap:8px}
 .btn.pri{background:var(--navy);color:var(--bg)}
 .btn.sun{background:var(--sun);color:var(--sun-ink)}
 .btn.ghost{background:var(--surface-2);color:var(--ink)}
@@ -282,7 +287,7 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
     { nome: 'Pedágio/Tag', emoji: '🛣️', cor: '#8E6CEF', chaves: ['pedagio', 'tag', 'sem parar', 'conectcar', 'veloe'] },
     { nome: 'Assinaturas', emoji: '📺', cor: '#C2418C', chaves: ['netflix', 'spotify', 'assinatura', 'streaming', 'prime video', 'disney', 'globoplay', 'youtube', 'deezer', 'hbo', 'max ', 'icloud', 'google one', 'chatgpt', 'claude'] },
     { nome: 'Compras Online', emoji: '📦', cor: '#FF8A3D', chaves: ['shopee', 'shein', 'mercado livre', 'amazon', 'aliexpress', 'magalu', 'magazine', 'temu', 'americanas'] },
-    { nome: 'Casa', emoji: '🛋️', cor: '#9B6B43', chaves: ['moveis', 'movel', 'utensilio', 'havan', 'ferramenta', 'tinta', 'limpeza', 'decoracao', 'cama', 'toalha', 'eletrodomestico', 'material de construcao', 'reforma', 'chaveiro', 'faxina', 'diarista'] },
+    { nome: 'Casa', emoji: '🛋️', cor: '#9B6B43', chaves: ['guarda-roupa', 'guarda roupa', 'moveis', 'movel', 'utensilio', 'havan', 'ferramenta', 'tinta', 'limpeza', 'decoracao', 'cama', 'toalha', 'eletrodomestico', 'material de construcao', 'reforma', 'chaveiro', 'faxina', 'diarista'] },
     { nome: 'Contas da Casa', emoji: '🏠', cor: '#1F8FB5', chaves: ['luz', 'energia', 'agua', 'internet', 'gas', 'condominio', 'aluguel', 'iptu', 'telefone', 'celular conta', 'conta de celular', 'parcela do apto', 'financiamento', 'prestacao da casa', 'vaga de garagem'] },
     { nome: 'Saúde/Farmácia', emoji: '💊', cor: '#E8505B', chaves: ['farmacia', 'remedio', 'drogaria', 'droga', 'medico', 'consulta', 'exame', 'dentista', 'plano de saude', 'hospital', 'laboratorio', 'psicolog', 'fisioterap', 'otica', 'oculos', 'drogasil', 'pague menos'] },
     { nome: 'Educação', emoji: '📚', cor: '#3B6FD4', chaves: ['escola', 'curso', 'livro', 'faculdade', 'material escolar', 'mensalidade', 'apostila', 'ingles', 'aula'] },
@@ -471,6 +476,33 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
   }
   const pagamento = (t) => (/credito|cartao/.test(t) ? 'Cartão' : /\bpix\b/.test(t) ? 'Pix' : /debito/.test(t) ? 'Débito' : /dinheiro|especie/.test(t) ? 'Dinheiro' : '');
 
+  // ------------------------------------------------------- conversa com perguntas
+  /** Interpreta e aplica; se havia uma pergunta pendente (ex.: em qual sonho guardar), resolve primeiro. */
+  function conversar(estado, texto, opts) {
+    opts = opts || {};
+    const hoje = opts.hoje || new Date();
+    const p = estado.pendente;
+    if (p && Date.now() - (p.em || 0) < 15 * 60e3) {
+      const t = sem(texto).trim();
+      if (/^(cancela|cancelar|deixa|deixa pra la|nao|esquece)\b/.test(t)) { delete estado.pendente; return { ok: true, msg: 'Tudo bem, não guardei nada. 🙂' }; }
+      if (p.tipo === 'sonho' && !extrairValor(t.replace(/^\d{1,2}$/, '')) && !/\b(gastei|paguei|comprei|recebi)\b/.test(t)) {
+        delete estado.pendente;
+        const n = t.match(/^(\d{1,2})\.?$/);
+        const lista = estado.sonhos || [];
+        const alvo = n ? lista[+n[1] - 1] : acharSonho(lista, t);
+        const acao = { tipo: 'sonho', valor: p.valor, data: p.data, investir: p.investir, sonhoId: alvo ? alvo.id : undefined, termo: alvo ? '' : String(texto).trim().replace(/^(novo|criar|cria|sonho|um sonho)\s+/i, '') };
+        if (!alvo && n) return { ok: false, msg: 'Não achei esse número. Responda de novo, por favor. 🙂', pergunta: p };
+        return aplicar(estado, acao, opts);
+      }
+      delete estado.pendente;
+    }
+    const acao = interpretar(texto, { hoje, categorias: estado.categorias, sonhos: estado.sonhos, cartoes: estado.cartoes });
+    const r = aplicar(estado, acao, opts);
+    if (r.pergunta) estado.pendente = r.pergunta;
+    r.acao = acao;
+    return r;
+  }
+
   // ------------------------------------------------------------------ cartões
   const BANCOS = [
     ['banco do brasil', 'Banco do Brasil', '#F8D117'], ['bb', 'Banco do Brasil', '#F8D117'], ['itau', 'Itaú', '#EC7000'], ['bradesco', 'Bradesco', '#CC092F'],
@@ -604,10 +636,13 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
       return { tipo: 'excluir', valor: val ? val.valor : null, termo: sem(termo), data: dt ? dt.data : null, alvo: /compromisso|consulta|reuniao/.test(t) ? 'agenda' : /conta\b|boleto/.test(t) && !val ? 'conta' : 'lancamento' };
     }
 
-    // SONHO (guardar dinheiro)
-    if (/\b(guardei|juntei|poupei|economizei|separei|reservei|investi|depositei)\b/.test(t) && val) {
-      const resto = sem(limparDescricao(original, [val.trecho, 'guardei', 'juntei', 'poupei', 'economizei', 'separei', 'reservei', 'investi', 'depositei', 'sonho', 'para o', 'pro']));
-      return { tipo: 'sonho', valor: val.valor, termo: resto, data: dt ? dt.data : iso(hoje) };
+    // SONHO (guardar / investir / cofrinho)
+    const verboGuardar = /\b(guard(ei|ar|e|a|amos)|junt(ei|ar|e|a)|poup(ei|ar|e|a)|economiz(ei|ar)|separ(ei|ar|e|a)|reserv(ei|ar|e)|invest(i|ir|e|a|imos)|deposit(ei|ar|e|a)|apliq(uei)|aplic(ar|a|ou)|cofrinho|caixinha)\b/;
+    if (val && verboGuardar.test(t) && !/\b(gastei|comprei|paguei|guarda.?roupa|guarda.?chuva)\b/.test(t)) {
+      const restoOrig = (limparDescricao(original, [val.trecho, dt && dt.trecho, 'guardei', 'guardar', 'guarde', 'guarda', 'juntei', 'juntar', 'poupei', 'poupar', 'economizei', 'separei', 'separar', 'reservei', 'reservar', 'investi', 'investir', 'invista', 'depositei', 'depositar', 'apliquei', 'aplicar', 'coloquei', 'colocar', 'coloca', 'coloque', 'botei', 'sonho', 'meu', 'minha', 'nosso', 'nossa', 'dinheiro', 'valor'])) || '';
+      const resto = sem(restoOrig);
+      const generico = !resto || /^(cofrinho|caixinha|sonhos?|cofre|poupanca da casa|algum|um|uma)$/.test(resto.trim()) || resto.trim().length < 3;
+      return { tipo: 'sonho', valor: val.valor, termo: generico ? '' : restoOrig.replace(/\b(cofrinho|caixinha)\b/gi, '').trim(), investir: /\binvest|aplic/.test(t), data: dt ? dt.data : iso(hoje) };
     }
 
     // ENTRADA
@@ -710,10 +745,11 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
           if (c) { const ym = mesDe(acao.data); c.pagos = c.pagos || {}; c.pagos[ym] = true; if (acao.valor) c.valor = acao.valor; c.upd = now; return { ok: true, item: c, colecao: 'contas', msg: `✅ Conta *${c.nome}* paga: ${brl(c.valor)} em ${nomeMes(ym)}. Uma preocupação a menos! 😌` }; }
         }
         const cc = garantirCartao(estado, acao.cartao);
-        const item = { id: uid(), tipo: 'gasto', data: acao.data, desc: acao.desc, cat: acao.cat, valor: acao.valor, pago: true, pagamento: cc ? 'Cartão' : (acao.pagamento || ''), cartaoId: cc ? cc.id : undefined, origem, upd: now };
+        const item = { id: uid(), tipo: 'gasto', data: acao.data, desc: acao.desc, cat: acao.cat, valor: acao.valor, pago: !cc && acao.pagamento !== 'Cartão', pagamento: cc ? 'Cartão' : (acao.pagamento || ''), cartaoId: cc ? cc.id : undefined, origem, upd: now };
         estado.lancamentos.push(item);
         let txtCartao = '';
         if (cc) { const f = fatura(estado, cc.id, mesFatura(cc, acao.data), hoje); txtCartao = `\n💳 Lançado no cartão *${cc.nome}* — fatura de ${mesCurto(f.ym)}: ${brl(f.total)}.`; }
+        else if (acao.pagamento && acao.pagamento !== 'Cartão') txtCartao = `\n✅ Pago no ${acao.pagamento === 'Dinheiro' ? 'dinheiro' : acao.pagamento} — já saiu do seu saldo do mês.`;
         else if (acao.cartaoSemBanco) txtCartao = (estado.cartoes || []).length ? `\n💳 Em qual cartão? Diga, por ex.: "no cartão ${(estado.cartoes[0] || {}).nome}".` : '\n💳 Dica: diga o banco ("cartão de crédito Itaú") que eu separo por cartão.';
         const r = resumoMes(estado, mesDe(acao.data));
         let extra = '';
@@ -785,13 +821,23 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
         return { ok: true, item: res.entrada || s, colecao: res.entrada ? 'lancamentos' : 'sonhos', msg: `💸 Retirei ${brl(acao.valor)} de *${s.nome}*${res.entrada ? ' e lancei como renda do mês' : ''}.\n${s.emoji || '⭐'} Ficaram ${brl(totalSonho(s))} guardados${s.custo ? ` (${Math.round(totalSonho(s) / s.custo * 100)}% do sonho)` : ''}.\n${/reserva|emergencia/.test(sem(s.nome)) ? 'Tudo bem usar a reserva quando precisa, é pra isso que ela existe. Depois a gente repõe juntos! 💙' : 'Quando der, a gente repõe juntos! 💙'}` };
       }
       case 'sonho': {
-        const sonhos = estado.sonhos || [];
-        if (!sonhos.length) return { ok: false, msg: 'Você ainda não tem sonhos cadastrados. Crie um na aba ⭐ Sonhos!' };
-        let s = acharSonho(sonhos, acao.termo) || sonhos[0];
+        estado.sonhos = estado.sonhos || [];
+        const sonhos = estado.sonhos;
+        let s = acao.sonhoId ? sonhos.find((x) => x.id === acao.sonhoId) : acharSonho(sonhos, acao.termo);
+        let criado = false;
+        if (!s && acao.termo && !acao.sonhoId) {
+          const nome = acao.termo.split(' ').map((p, i) => i === 0 ? p.charAt(0).toUpperCase() + p.slice(1) : p).join(' ');
+          s = { id: uid(), nome, emoji: acao.investir ? '📈' : '⭐', custo: 0, prazo: '', guardadoAntes: 0, aportes: [], upd: now };
+          sonhos.push(s); criado = true;
+        }
+        if (!s) {
+          const pergunta = { tipo: 'sonho', valor: acao.valor, data: acao.data, investir: !!acao.investir, em: now };
+          return { ok: false, pergunta, msg: `💛 Onde você quer ${acao.investir ? 'investir' : 'guardar'} ${brl(acao.valor)}?\n` + sonhos.map((x, i) => `${i + 1}. ${x.emoji || '⭐'} ${x.nome}`).join('\n') + `\n\nResponda o *número*${sonhos.length ? '' : ''} ou o *nome de um sonho novo* (ex.: "Viagem para a praia").` };
+        }
         s.aportes = s.aportes || []; s.aportes.push({ id: uid(), data: acao.data, valor: acao.valor }); s.upd = now;
         const tot = totalSonho(s);
         const pct = s.custo ? Math.min(100, Math.round((tot / s.custo) * 100)) : 0;
-        return { ok: true, item: s, colecao: 'sonhos', msg: `⭐ Uhuul! ${brl(acao.valor)} guardados para *${s.nome}*.${s.custo ? ` Você já está em ${pct}% do caminho (${brl(tot)} de ${brl(s.custo)}).` : ''} Cada passo conta! 🚀` };
+        return { ok: true, item: s, colecao: 'sonhos', msg: `${criado ? `🌈 Criei o sonho *${s.nome}* para você!\n` : ''}⭐ Uhuul! ${brl(acao.valor)} ${acao.investir ? 'investidos' : 'guardados'} em *${s.nome}*.${s.custo ? ` Você já está em ${pct}% do caminho (${brl(tot)} de ${brl(s.custo)}).` : ''} Cada passo conta! 🚀` };
       }
       case 'excluir': {
         if (acao.alvo === 'agenda') {
@@ -921,6 +967,7 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
     contas.forEach((c) => { porCategoria[c.cat] = (porCategoria[c.cat] || 0) + (Number(c.valor) || 0); });
     parcs.forEach((x) => { porCategoria[x.p.cat] = (porCategoria[x.p.cat] || 0) + x.p.valor; });
     const orcamento = Number(estado.perfil && estado.perfil.orcamento) || entradas;
+    const _ym = ym;
     // saldo acumulado
     let saldoAcum = Number(estado.perfil && estado.perfil.saldoInicial) || 0;
     const meses = mesesComDados(estado);
@@ -930,7 +977,9 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
     return {
       ym, entradas, gastosDia, ticketGasto, fixas, fixasPagas, parcelas, parcs, contas, guardado, gastoTotal, sobraAntes, sobra, saldoAcum, porCategoria, orcamento,
       pctOrcamento: orcamento > 0 ? gastoTotal / orcamento : 0, pctGuardado: entradas > 0 ? guardado / entradas : 0,
-      maiorCategoria: maior ? { nome: maior[0], valor: maior[1] } : null, anuaisMes, lancamentos: L
+      maiorCategoria: maior ? { nome: maior[0], valor: maior[1] } : null, anuaisMes, lancamentos: L,
+      // dinheiro que já saiu de fato: gastos pagos (dinheiro, pix, débito), contas pagas, faturas pagas e o que foi guardado
+      jaSaiu: (() => { const g = L.filter((l) => l.tipo === 'gasto' && !l.ticket && !l.cartaoId && l.pagamento !== 'Cartão').reduce((a, b) => a + b.valor, 0); const fat = (estado.cartoes || []).reduce((a, c) => { const f = fatura(estado, c.id, ym); return a + (f ? f.pago : 0); }, 0); const parcSem = parcs.filter((x) => !x.p.cartaoId).reduce((a, b) => a + b.p.valor, 0); return g + fixasPagas + fat + parcSem + guardado; })()
     };
   }
   function resumoSimples(estado, ym) {
@@ -999,7 +1048,7 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
   }
   function textoAjuda(estado) {
     const n = estado.perfil && estado.perfil.nome ? ', ' + estado.perfil.nome.split(' ')[0] : '';
-    return `Oi${n}! 💙 Eu sou o *Sonhaí*, seu parceiro das finanças.\n\nVocê pode me mandar texto ou áudio:\n🛒 "gastei 45,90 no mercado"\n💰 "recebi 3500 de salário"\n🛍️ "comprei uma TV de 2000 em 10x no cartão Nubank"\n💳 "gastei 10 na lanchonete no cartão de crédito Itaú"\n💳 "paguei a fatura do Itaú" • "paguei 500 da fatura do Bradesco"\n🗓️ "conta de luz vence dia 10, 150 reais"\n📌 "dentista quinta às 14h"\n⭐ "guardei 200 para a viagem"\n💸 "retire 500 da reserva de emergência e coloque como renda"\n🔁 "transfere 300 da reserva para a viagem"\n🗑️ "exclui o gasto de 45,90"\n↩️ "desfazer"\n📊 "resumo" • "contas a pagar" • "agenda"`;
+    return `Oi${n}! 💙 Eu sou o *Sonhaí*, seu parceiro das finanças.\n\nVocê pode me mandar texto ou áudio:\n🛒 "gastei 45,90 no mercado"\n💰 "recebi 3500 de salário"\n🛍️ "comprei uma TV de 2000 em 10x no cartão Nubank"\n💳 "gastei 10 na lanchonete no cartão de crédito Itaú"\n💳 "paguei a fatura do Itaú" • "paguei 500 da fatura do Bradesco"\n🗓️ "conta de luz vence dia 10, 150 reais"\n📌 "dentista quinta às 14h"\n⭐ "guardei 200 para a viagem" • "investi 500"\n💸 "retire 500 da reserva de emergência e coloque como renda"\n🔁 "transfere 300 da reserva para a viagem"\n🗑️ "exclui o gasto de 45,90"\n↩️ "desfazer"\n📊 "resumo" • "contas a pagar" • "agenda"`;
   }
   function barra(p) { const n = Math.max(0, Math.min(10, Math.round(p * 10))); return '🟩'.repeat(Math.min(n, 7)) + (n > 7 ? '🟨'.repeat(Math.min(n - 7, 2)) : '') + (n > 9 ? '🟥' : '') + '⬜'.repeat(10 - n); }
   function mensagemHumor(r) {
@@ -1045,7 +1094,7 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
   return {
     CATEGORIAS, TIPOS_ENTRADA, INCENTIVOS, MESES, sem, uid, iso, pad, brl, dataBR, mesDe, nomeMes, mesCurto, somaMes, difMeses, diasNoMes, agora,
     BANCOS, detectarCartao, garantirCartao, mesFatura, fatura, pagarFatura, faturasAVencer, rotuloFatura,
-    interpretar, aplicar, remover, acharSonho, retirarDoSonho, estadoVazio, resumoMes, mesesComDados, parcelaNoMes, contaNoMes, contasAVencer, contasAtrasadas, totalSonho,
+    conversar, interpretar, aplicar, remover, acharSonho, retirarDoSonho, estadoVazio, resumoMes, mesesComDados, parcelaNoMes, contaNoMes, contasAVencer, contasAtrasadas, totalSonho,
     textoResumo, textoContas, textoAgenda, textoAjuda, mensagemHumor, barra, mesclar, adivinharCategoria, extrairValor, extrairData, extrairHora
   };
 });
@@ -1149,7 +1198,18 @@ function confete(){
   const P = Array.from({ length: 140 }, () => ({ x: innerWidth / 2, y: innerHeight * .45, vx: (Math.random() - .5) * 14, vy: -Math.random() * 14 - 4, s: 5 + Math.random() * 6, c: cores[Math.random() * 6 | 0], r: Math.random() * 6 }));
   let f = 0; (function tick(){ ctx.clearRect(0,0,cv.width,cv.height); P.forEach((p) => { p.vy += .4; p.x += p.vx; p.y += p.vy; p.r += .2; ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(p.r); ctx.fillStyle = p.c; ctx.fillRect(-p.s/2,-p.s/2,p.s,p.s*.6); ctx.restore(); }); if (++f < 110) requestAnimationFrame(tick); else cv.remove(); })();
 }
-function go(tela){ view.tela = tela; try { history.replaceState(null, '', '#' + tela); } catch(e){} render(); scrollTo(0, 0); }
+let oculto = false; try { oculto = localStorage.getItem('cc-oculto') === '1'; } catch(e){}
+const M = (v) => oculto ? 'R$ •••••' : brl(v);
+function alternarOculto(){ oculto = !oculto; try { localStorage.setItem('cc-oculto', oculto ? '1' : '0'); } catch(e){} render(); }
+// navegação com histórico: o botão voltar (do app e do celular) volta para a tela anterior
+let profundidade = 0;
+function go(tela){
+  if (tela === view.tela) { render(); return; }
+  view.tela = tela;
+  try { if (tela === 'inicio') { history.replaceState(null, '', '#inicio'); profundidade = 0; } else { history.pushState(null, '', '#' + tela); profundidade++; } } catch(e){}
+  render(); scrollTo(0, 0);
+}
+function voltar(){ if (profundidade > 0) { try { history.back(); return; } catch(e){} } go('inicio'); }
 function sheet(html, onMount){
   const L = $('#layer');
   L.innerHTML = '<div class="scrim" id="scrim"><div class="sheet" role="dialog" aria-modal="true"><div class="grab"></div>' + html + '</div></div>';
@@ -1185,7 +1245,7 @@ function ccardHTML(f, extra){
 }
 function itemLanc(l){
   const ci = catInfo(l.cat); const ent = l.tipo === 'entrada';
-  return '<button class="item" data-edit-lanc="' + l.id + '"><span class="ico" style="background:' + (ent ? 'var(--tile-in)' : soft(ci.cor)) + '">' + (ent ? '💰' : ci.emoji) + '</span><span class="mid"><span class="ttl">' + esc(l.desc || l.cat) + '</span><span class="meta">' + esc(l.cat) + ' · ' + C.dataBR(l.data) + (l.origem === 'voz' ? ' · 🎤' : l.origem === 'whatsapp' ? ' · 💬' : '') + (l.cartaoId && cartaoDe(l.cartaoId) ? ' · 💳 ' + esc(cartaoDe(l.cartaoId).nome) : l.pagamento ? ' · ' + esc(l.pagamento) : '') + '</span></span><span class="val num ' + (ent ? 'in' : 'out') + '">' + (ent ? '+ ' : '') + brl(l.valor) + '</span></button>';
+  return '<button class="item" data-edit-lanc="' + l.id + '"><span class="ico" style="background:' + (ent ? 'var(--tile-in)' : soft(ci.cor)) + '">' + (ent ? '💰' : ci.emoji) + '</span><span class="mid"><span class="ttl">' + esc(l.desc || l.cat) + '</span><span class="meta">' + esc(l.cat) + ' · ' + C.dataBR(l.data) + (l.origem === 'voz' ? ' · 🎤' : l.origem === 'whatsapp' ? ' · 💬' : '') + (l.cartaoId && cartaoDe(l.cartaoId) ? ' · 💳 ' + esc(cartaoDe(l.cartaoId).nome) : l.pagamento ? ' · ' + esc(l.pagamento) : '') + (!ent ? (l.cartaoId || l.pagamento === 'Cartão' ? ' · na fatura' : ' · <span class="pago">✓ pago</span>') : '') + '</span></span><span class="val num ' + (ent ? 'in' : 'out') + '">' + (ent ? '+ ' : '') + brl(l.valor) + '</span></button>';
 }
 function sugestaoSonho(s){
   const falta = Math.max(0, (s.custo || 0) - C.totalSonho(s));
@@ -1215,14 +1275,15 @@ TELAS.inicio = function(){
   const ult = r.lancamentos.slice().sort((a, b) => b.data.localeCompare(a.data) || (b.upd || 0) - (a.upd || 0)).slice(0, 5);
   const pagas = r.contas.filter((c) => c.pagos && c.pagos[view.ym]).length;
   let h = '';
-  h += '<section class="card hero" aria-label="Resumo do mês"><div class="lbl">Sobrou no mês</div><div class="big num ' + (r.sobra < 0 ? 'neg' : 'pos') + '">' + brl(r.sobra) + '</div><div class="sub">Entrou ' + brl(r.entradas) + ' · saiu ' + brl(r.gastoTotal) + ' · guardou ' + brl(r.guardado) + '</div>';
-  if (r.orcamento > 0) h += '<div class="meter"><div class="bar" role="progressbar" aria-valuenow="' + Math.round(pct * 100) + '" aria-valuemin="0" aria-valuemax="100"><div class="fill" style="width:' + Math.min(100, pct * 100) + '%;background:' + cor + '"></div></div><div class="legend"><span><b>' + Math.round(pct * 100) + '%</b> do orçamento usado</span><span>' + (r.orcamento - r.gastoTotal >= 0 ? 'Restam <b>' + brl(r.orcamento - r.gastoTotal) + '</b>' : 'Passou <b>' + brl(r.gastoTotal - r.orcamento) + '</b>') + '</span></div></div>';
+  const disp = r.entradas - r.jaSaiu;
+  h += '<section class="card hero" aria-label="Resumo do mês"><div class="cardhead" style="margin:0"><div class="lbl">Sobrou no mês</div><button class="olho" id="olho" aria-label="' + (oculto ? 'Mostrar valores' : 'Esconder valores') + '" aria-pressed="' + oculto + '">' + (oculto ? OLHO_FECHADO : OLHO) + '</button></div><div class="big num ' + (r.sobra < 0 ? 'neg' : 'pos') + '">' + M(r.sobra) + '</div><div class="sub">Entrou ' + M(r.entradas) + ' · saiu ' + M(r.gastoTotal) + ' · guardou ' + M(r.guardado) + '</div><div class="disp">💵 Disponível agora: <b class="num ' + (disp < 0 ? 'neg' : '') + '">' + M(disp) + '</b> <span class="sub">(já descontado o que foi pago)</span></div>';
+  if (r.orcamento > 0) h += '<div class="meter"><div class="bar" role="progressbar" aria-valuenow="' + Math.round(pct * 100) + '" aria-valuemin="0" aria-valuemax="100"><div class="fill" style="width:' + Math.min(100, pct * 100) + '%;background:' + cor + '"></div></div><div class="legend"><span><b>' + Math.round(pct * 100) + '%</b> do orçamento usado</span><span>' + (r.orcamento - r.gastoTotal >= 0 ? 'Restam <b>' + M(r.orcamento - r.gastoTotal) + '</b>' : 'Passou <b>' + M(r.gastoTotal - r.orcamento) + '</b>') + '</span></div></div>';
   h += mood(r) + '</section>';
   h += '<section class="tiles" aria-label="Números do mês">' +
-    '<button class="tile t-in" data-go="gastos" data-aba="entradas"><span class="t">💰 Entrou</span><span class="v num">' + brl(r.entradas) + '</span><span class="s">' + r.lancamentos.filter((l) => l.tipo === 'entrada').length + ' entradas</span></button>' +
-    '<button class="tile t-out" data-go="gastos"><span class="t">🛒 Gastei</span><span class="v num">' + brl(r.gastoTotal) + '</span><span class="s">Fixas ' + brl(r.fixas).replace(',00','') + ' · dia a dia ' + brl(r.gastosDia).replace(',00','') + '</span></button>' +
-    '<button class="tile t-dream" data-go="sonhos"><span class="t">⭐ Guardei</span><span class="v num">' + brl(r.guardado) + '</span><span class="s">' + Math.round(r.pctGuardado * 100) + '% do que entrou</span></button>' +
-    '<button class="tile t-bal" data-go="relatorios"><span class="t">🏦 Saldo acumulado</span><span class="v num ' + (r.saldoAcum < 0 ? 'neg' : '') + '">' + brl(r.saldoAcum) + '</span><span class="s">' + (r.maiorCategoria ? 'Maior gasto: ' + esc(r.maiorCategoria.nome) : 'Sem gastos ainda') + '</span></button></section>';
+    '<button class="tile t-in" data-go="gastos" data-aba="entradas"><span class="t">💰 Entrou</span><span class="v num">' + M(r.entradas) + '</span><span class="s">' + r.lancamentos.filter((l) => l.tipo === 'entrada').length + ' entradas</span></button>' +
+    '<button class="tile t-out" data-go="gastos"><span class="t">🛒 Gastei</span><span class="v num">' + M(r.gastoTotal) + '</span><span class="s">Fixas ' + M(r.fixas).replace(',00','') + ' · dia a dia ' + M(r.gastosDia).replace(',00','') + '</span></button>' +
+    '<button class="tile t-dream" data-go="sonhos"><span class="t">⭐ Guardei</span><span class="v num">' + M(r.guardado) + '</span><span class="s">' + Math.round(r.pctGuardado * 100) + '% do que entrou</span></button>' +
+    '<button class="tile t-bal" data-go="relatorios"><span class="t">🏦 Saldo acumulado</span><span class="v num ' + (r.saldoAcum < 0 ? 'neg' : '') + '">' + M(r.saldoAcum) + '</span><span class="s">' + (r.maiorCategoria ? 'Maior gasto: ' + esc(r.maiorCategoria.nome) : 'Sem gastos ainda') + '</span></button></section>';
   if (ehHoje) {
     h += '<section class="card"><div class="cardhead"><h2>☀️ Hoje</h2><span class="sub">' + esc(hoje().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })) + '</span></div><div class="list">';
     const linhas = [];
@@ -1284,6 +1345,20 @@ TELAS.cartoes = function(){
   });
   return h + '<div class="note">💡 Diga “a fatura do Itaú vence dia 10 e fecha dia 3” para ajustar o vencimento e o fechamento. Compras feitas a partir do dia do fechamento caem na fatura seguinte.</div>';
 };
+
+TELAS.master = function(){
+  if (!conta || !conta.admin) return '<section class="card"><div class="empty">Acesso restrito.</div></section>';
+  if (!view.adm) { carregarAdmin(); return '<section class="card"><div class="empty">Carregando usuários…</div></section>'; }
+  const L = view.adm.usuarios; const busca = C.sem(view.admBusca || '');
+  const f = L.filter((u) => !busca || C.sem(u.nome + ' ' + u.fone).includes(busca));
+  const t = view.adm.totais;
+  let h = '<section class="tiles"><div class="tile t-bal"><span class="t">👥 Usuários</span><span class="v num">' + t.usuarios + '</span><span class="s">' + t.novos7 + ' novos em 7 dias</span></div><div class="tile t-in"><span class="t">🟢 Ativos (7 dias)</span><span class="v num">' + t.ativos7 + '</span><span class="s">' + t.ativos30 + ' em 30 dias</span></div><div class="tile t-dream"><span class="t">💬 Canais</span><span class="v num">' + t.telegram + ' TG · ' + t.whatsapp + ' WA</span><span class="s">conectados</span></div><div class="tile t-out"><span class="t">🗄️ Banco</span><span class="v num">' + (t.bytes / 1048576).toFixed(1) + ' MB</span><span class="s">de 500 MB grátis · ' + t.lancamentos + ' lançamentos</span></div></section>';
+  h += '<section class="card"><div class="cardhead"><h2>👑 Usuários</h2><button class="addbtn" id="adm-bk">⬇️ Backup geral</button></div><input class="search" id="adm-busca" type="search" placeholder="Buscar por nome ou telefone" value="' + esc(view.admBusca || '') + '"><div class="list" style="margin-top:8px">';
+  h += f.map((u) => '<div class="item"><span class="ico" style="background:' + (u.bloqueado ? 'var(--tile-out)' : 'var(--tile-in)') + '">' + (u.admin ? '👑' : u.bloqueado ? '⛔' : '👤') + '</span><span class="mid"><span class="ttl">' + esc(u.nome || '(sem nome)') + '</span><span class="meta">+' + esc(u.fone) + ' · desde ' + C.dataBR(u.criado) + ' · visto ' + (u.ultimo ? C.dataBR(u.ultimo) : '—') + '</span><span class="meta">' + u.lancamentos + ' lançamentos · ' + (u.telegram ? '✈️ ' : '') + (u.whatsapp ? '💬 ' : '') + (u.temSenha ? '🔐' : 'sem senha') + '</span></span>' + (u.admin ? '' : '<button class="btn ' + (u.bloqueado ? 'ghost' : 'danger') + '" style="padding:8px 10px;font-size:13px" data-bloq="' + esc(u.k) + '">' + (u.bloqueado ? 'Liberar' : 'Bloquear') + '</button>') + '</div>').join('') || '<div class="empty">Nenhum usuário.</div>';
+  h += '</div></section><div class="note">🔒 Por privacidade (LGPD), o painel mostra só dados da conta e quantidades. Os valores financeiros de cada pessoa não aparecem aqui.</div>';
+  return h;
+};
+async function carregarAdmin(){ try { view.adm = await api('/api/admin/usuarios'); } catch(e){ view.adm = { usuarios: [], totais: { usuarios: 0, novos7: 0, ativos7: 0, ativos30: 0, telegram: 0, whatsapp: 0, bytes: 0, lancamentos: 0 } }; toast(e.message); } render(); }
 
 TELAS.parcelados = function(){
   const ym = C.mesDe(hojeISO());
@@ -1375,9 +1450,11 @@ TELAS.whatsapp = function(){
   if (fv.length) {
     lembrete = (lembrete || 'Bom dia' + (S.perfil.nome ? ', ' + S.perfil.nome.split(' ')[0] : '') + '! ☀️💙\n') + '\n' + fv.map((x) => (x.emDias ? '🟡 Amanhã' : '🔴 HOJE') + ' vence a fatura *' + x.fatura.cartao.nome + '* — ' + brl(x.fatura.falta)).join('\n');
   }
-  let h = '<section class="card"><div class="cardhead"><h2>💬 WhatsApp</h2>' + (SERVER && token ? '<span class="chip ok">● Conectado</span>' : '<span class="chip warn">Modo demonstração</span>') + '</div>';
+  let h = '';
+  if (SERVER && cfg.telegram && conta) h += '<section class="card" style="background:var(--tile-bal)"><div class="cardhead"><h2>✈️ Telegram</h2>' + (conta.telegram ? '<span class="chip ok">● Conectado</span>' : '<span class="chip info">Grátis</span>') + '</div>' + (conta.telegram ? '<p style="margin:0 0 10px">Pronto! Mande gastos por texto ou áudio para <b>@' + esc(cfg.telegram) + '</b>. Os lembretes de contas, faturas e compromissos chegam por lá.</p><div class="btnrow"><a class="btn sun" href="https://t.me/' + esc(cfg.telegram) + '" target="_blank" rel="noopener">Abrir o Telegram</a><button class="btn ghost" id="tg-off">Desconectar</button></div>' : '<p style="margin:0 0 10px">Lance gastos por texto ou <b>áudio</b> e receba lembretes das contas pelo Telegram, sem custo nenhum.</p><button class="btn pri block" id="tg-on">✈️ Conectar Telegram</button><p class="sub" style="margin:8px 0 0">Vai abrir o Telegram: é só tocar em <b>Iniciar</b>.</p>') + '</section>';
+  h += '<section class="card"><div class="cardhead"><h2>💬 WhatsApp</h2>' + (SERVER && !cfg.demo && conta && conta.verificado ? '<span class="chip ok">● Conectado</span>' : SERVER && cfg.demo ? '<span class="chip warn">Ainda não ligado</span>' : '<span class="chip warn">Modo demonstração</span>') + '</div>';
   h += '<div class="field"><label for="wa-num">Seu número de WhatsApp (com DDD)</label><input id="wa-num" inputmode="tel" placeholder="(16) 99999-9999" value="' + esc(num) + '"></div>';
-  h += '<div class="note">' + (SERVER ? 'Mande <b>oi</b> para o número do Sonhaí no WhatsApp e toque no link que ele responder para ligar este app à sua conta.' : 'Aqui você testa como a conversa funciona. Com o servidor do Sonhaí ligado, as mensagens chegam de verdade no seu WhatsApp: lembretes 1 dia antes e no dia do vencimento, compromissos do dia, e você lança gastos por texto ou áudio.') + '</div></section>';
+  h += '<div class="note">' + (SERVER && cfg.demo ? 'O WhatsApp do Sonhaí ainda não foi ligado no servidor.' + (cfg.telegram ? ' Por enquanto, use o <b>Telegram</b> acima: é grátis e faz tudo igual.' : '') + ' A conversa abaixo é só um teste.' : SERVER ? 'Mande <b>oi</b> para o número do Sonhaí no WhatsApp e toque no link que ele responder para ligar este app à sua conta.' : 'Aqui você testa como a conversa funciona. Com o servidor do Sonhaí ligado, as mensagens chegam de verdade no seu WhatsApp: lembretes 1 dia antes e no dia do vencimento, compromissos do dia, e você lança gastos por texto ou áudio.') + '</div></section>';
   h += '<section class="card" style="padding:0;overflow:hidden"><div class="wahead"><span class="av">💙</span><div><b>Sonhaí</b><div style="font-size:12px;opacity:.85">online</div></div></div><div class="wa" id="wa" style="border-radius:0">' + (S.chat || []).slice(-40).map((m) => '<div class="bub ' + (m.de === 'me' ? 'me' : 'bot') + '">' + fmtWa(m.txt) + '<small>' + new Date(m.em).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) + '</small></div>').join('') + '</div><form class="typebox" id="wa-form" style="padding:10px"><input id="wa-txt" placeholder="Escreva: gastei 20 no lanche" autocomplete="off" aria-label="Mensagem"><button class="btn pri" type="submit" aria-label="Enviar">➤</button></form></section>';
   h += '<section class="card"><h2 style="font-size:18px;margin-bottom:8px">🔔 Lembrete de hoje</h2>' + (lembrete ? '<div class="wa" style="max-height:none"><div class="bub bot">' + fmtWa(lembrete) + '</div></div>' : '<div class="empty">Nada para lembrar hoje. 🙂</div>') + '<div class="note" style="margin-top:10px">Enviado todo dia às <b>' + esc(S.perfil.lembreteHora || '08:00') + '</b>. Compromissos com horário também recebem aviso 1 hora antes.</div></section>';
   return h;
@@ -1399,11 +1476,11 @@ TELAS.ajustes = function(){
 };
 
 TELAS.mais = function(){
-  const it = [['💳', 'Cartões', 'cartoes'], ['🧾', 'Contas', 'contas'], ['⭐', 'Sonhos', 'sonhos'], ['📈', 'Relatórios', 'relatorios'], ['🛍️', 'Parcelados', 'parcelados'], ['💳', 'Dívidas', 'dividas'], ['📌', 'Gastos do ano', 'anuais'], ['💰', 'Entradas', 'entradas'], ['💬', 'WhatsApp', 'whatsapp'], ['⚙️', 'Ajustes', 'ajustes']].filter((x) => x[2] !== 'entradas');
+  const it = [['💳', 'Cartões', 'cartoes'], ['🧾', 'Contas', 'contas'], ['⭐', 'Sonhos', 'sonhos'], ['📈', 'Relatórios', 'relatorios'], ['🛍️', 'Parcelados', 'parcelados'], ['💳', 'Dívidas', 'dividas'], ['📌', 'Gastos do ano', 'anuais'], ['💰', 'Entradas', 'entradas'], ['💬', 'Mensagens', 'whatsapp'], ['⚙️', 'Ajustes', 'ajustes']].concat(conta && conta.admin ? [['👑', 'Painel master', 'master']] : []).filter((x) => x[2] !== 'entradas');
   return '<section class="morelist">' + it.map((x) => '<button data-go="' + (x[2] === 'entradas' ? 'gastos' : x[2]) + '"' + (x[2] === 'entradas' ? ' data-aba="entradas"' : '') + '><span>' + x[0] + '</span><span>' + x[1] + '</span></button>').join('') + '</section><section class="card"><h2 style="font-size:18px;margin-bottom:6px">🎤 O que posso dizer?</h2><div class="sub" style="white-space:pre-line">' + esc(C.textoAjuda(S).split('\n').slice(3).join('\n')) + '</div></section>';
 };
 
-const TITULOS = { cartoes: 'Cartões', inicio: '', gastos: 'Lançamentos', contas: 'Contas', parcelados: 'Parcelados', agenda: 'Agenda', sonhos: 'Sonhos', relatorios: 'Relatórios', dividas: 'Dívidas', anuais: 'Gastos do ano', whatsapp: 'WhatsApp', ajustes: 'Ajustes', mais: 'Mais opções' };
+const TITULOS = { master: 'Painel master', cartoes: 'Cartões', inicio: '', gastos: 'Lançamentos', contas: 'Contas', parcelados: 'Parcelados', agenda: 'Agenda', sonhos: 'Sonhos', relatorios: 'Relatórios', dividas: 'Dívidas', anuais: 'Gastos do ano', whatsapp: 'Mensagens', ajustes: 'Ajustes', mais: 'Mais opções' };
 
 // ------------------------------------------------------------ render
 function render(){
@@ -1411,7 +1488,7 @@ function render(){
   const t = view.tela; const nome = S.perfil.nome;
   const mostraMes = ['inicio', 'gastos', 'contas', 'relatorios', 'cartoes'].includes(t);
   let h = '<header class="top wrap"><span class="blob" style="width:180px;height:180px;background:var(--sun);right:-50px;top:-60px"></span><span class="blob" style="width:120px;height:120px;background:var(--coral);left:-40px;bottom:-50px"></span><div class="row"><div class="brand"><span class="logo" aria-hidden="true">' + LOGO + '</span>Sonhaí</div>' + (mostraMes ? '<div class="monthsel"><button data-mes="-1" aria-label="Mês anterior">‹</button><span>' + esc(C.nomeMes(view.ym).replace(' de ', ' ')) + '</span><button data-mes="1" aria-label="Próximo mês">›</button></div>' : '<button class="iconbtn" data-go="ajustes" aria-label="Ajustes">⚙️</button>') + '</div>';
-  h += t === 'inicio' ? '<div class="hello">' + saudacao() + '<b>' + esc(nome || 'Que bom te ver!') + ' 👋</b></div>' : '<div class="hello"><b>' + esc(TITULOS[t] || '') + '</b></div>';
+  h += t === 'inicio' ? '<div class="hello">' + saudacao() + '<b>' + esc(nome || 'Que bom te ver!') + ' 👋</b></div>' : '<div class="hello comvoltar"><button class="voltar" id="voltar" aria-label="Voltar">‹</button><b>' + esc(TITULOS[t] || '') + '</b></div>';
   h += '</header>';
   if (S.demo && !SERVER) h += '<div class="demo" role="note"><span>🧪 Você está vendo dados de exemplo.</span><button id="sair-demo">Começar o meu</button></div>';
   h += '<main class="content wrap">' + (t === 'inicio' ? avisoVerificar() : '') + (TELAS[t] || TELAS.inicio)() + '</main>';
@@ -1421,6 +1498,8 @@ function render(){
   bind();
   const wa = $('#wa'); if (wa) wa.scrollTop = wa.scrollHeight;
 }
+const OLHO = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+const OLHO_FECHADO = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.1M6.1 6.1C3.6 7.8 2 12 2 12s3.6 7 10 7a9.9 9.9 0 0 0 5.9-1.9"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>';
 const LOGO = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 21s-7.5-4.6-9.4-9.3C1.2 8.3 3.4 4.5 7 4.5c2 0 3.4 1.1 5 3 1.6-1.9 3-3 5-3 3.6 0 5.8 3.8 4.4 7.2C19.5 16.4 12 21 12 21z" fill="#1B3A6B"/><path d="M8.5 12.2l2.3 2.3 4.7-4.8" stroke="#FFC83D" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 function saudacao(){ const h = hoje().getHours(); return h < 12 ? 'Bom dia,' : h < 18 ? 'Boa tarde,' : 'Boa noite,'; }
 function aplicarTema(){ const t = S.perfil.tema; if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); else if (S.perfil.temaAplicado) document.documentElement.removeAttribute('data-theme'); S.perfil.temaAplicado = t; }
@@ -1453,10 +1532,17 @@ function bind(){
   A.querySelectorAll('[data-semana]').forEach((b) => b.onclick = () => { const d = new Date(view.diaAgenda + 'T12:00'); d.setDate(d.getDate() + +b.dataset.semana); view.diaAgenda = C.iso(d); render(); });
   const bu = $('#busca'); if (bu) bu.oninput = () => { view.busca = bu.value; const pos = bu.selectionStart; render(); const n = $('#busca'); n.focus(); n.setSelectionRange(pos, pos); };
   const sd = $('#sair-demo'); if (sd) sd.onclick = onboarding;
+  const tgOn = $('#tg-on'); if (tgOn) tgOn.onclick = async () => { const w = window.open('', '_blank'); try { const j = await api('/api/telegram/link', {}); if (w) w.location = j.link; else location.href = j.link; toast('✈️ Toque em Iniciar no Telegram. Depois volte aqui.'); const t0 = Date.now(); const iv = setInterval(async () => { try { conta = await api('/api/eu'); if (conta.telegram) { clearInterval(iv); render(); confete(); toast('✅ Telegram conectado!'); } } catch(e){} if (Date.now() - t0 > 5 * 60e3) clearInterval(iv); }, 4000); } catch(e){ if (w) w.close(); toast(e.message); } };
+  const tgOff = $('#tg-off'); if (tgOff) tgOff.onclick = () => confirmar('Desconectar o Telegram? Você para de receber lembretes por lá.', async () => { try { await api('/api/telegram/desligar', {}); conta.telegram = false; render(); toast('Telegram desconectado'); } catch(e){ toast(e.message); } });
+  const ab = $('#adm-busca'); if (ab) ab.oninput = () => { view.admBusca = ab.value; const pos = ab.selectionStart; render(); const n = $('#adm-busca'); n.focus(); n.setSelectionRange(pos, pos); };
+  const abk = $('#adm-bk'); if (abk) abk.onclick = async () => { try { const j = await api('/api/admin/backup'); baixarArquivo('sonhai-backup-geral-' + hojeISO() + '.json', JSON.stringify(j)); toast('⬇️ Backup geral baixado'); } catch(e){ toast(e.message); } };
+  A.querySelectorAll('[data-bloq]').forEach((b) => b.onclick = () => { const u = view.adm.usuarios.find((x) => x.k === b.dataset.bloq); confirmar((u.bloqueado ? 'Liberar' : 'Bloquear') + ' o acesso de ' + (u.nome || u.fone) + '?', async () => { try { await api('/api/admin/bloquear', { k: u.k, bloquear: !u.bloqueado }); view.adm = null; render(); } catch(e){ toast(e.message); } }); });
   const cs = $('#ct-senha'); if (cs) cs.onclick = () => formSenha(!conta.temSenha);
   const cx = $('#ct-sair'); if (cx) cx.onclick = () => confirmar('Sair da sua conta neste aparelho?', () => sair(false));
   const ctd = $('#ct-todos'); if (ctd) ctd.onclick = () => confirmar('Sair da conta em todos os aparelhos (celular, computador…)?', () => sair(true));
   $('#fab').onclick = abrirVoz;
+  const vb = $('#voltar'); if (vb) vb.onclick = voltar;
+  const ol = $('#olho'); if (ol) ol.onclick = alternarOculto;
   // whatsapp
   const wf = $('#wa-form'); if (wf) wf.onsubmit = (e) => { e.preventDefault(); const t = $('#wa-txt').value.trim(); if (!t) return; conversar(t); };
   const wn = $('#wa-num'); if (wn) wn.onchange = () => { S.perfil.whatsapp = wn.value.trim(); S.perfilUpd = Date.now(); save(); toast('📱 Número salvo'); };
@@ -1469,8 +1555,10 @@ function bind(){
 }
 const num = (v) => { if (typeof v === 'number') return v; const s = String(v || '').trim().replace(/[^\d,.-]/g, ''); if (!s) return 0; const n = /,/.test(s) ? s.replace(/\./g, '').replace(',', '.') : s; return Math.round(parseFloat(n) * 100) / 100 || 0; };
 function confirmar(msg, ok){ sheet('<h3>Tem certeza?</h3><p>' + esc(msg) + '</p><div class="btnrow"><button class="btn ghost" id="cf-n">Cancelar</button><button class="btn danger" id="cf-s">Sim, continuar</button></div>', () => { $('#cf-n').onclick = fechar; $('#cf-s').onclick = () => { fechar(); ok(); }; }); }
+function baixarArquivo(nome, txt){ const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([txt], { type: 'application/json' })); a.download = nome; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); }
 function backupExport(){
   const txt = JSON.stringify(S);
+  if (SERVER) { baixarArquivo('sonhai-backup-' + hojeISO() + '.json', txt); toast('⬇️ Backup baixado. Guarde o arquivo em local seguro.'); return; }
   const out = $('#bk-out');
   const done = () => toast('📋 Backup copiado. Cole num e-mail ou bloco de notas para guardar.');
   try { navigator.clipboard.writeText(txt).then(done, () => mostrar()); } catch(e){ mostrar(); }
@@ -1485,7 +1573,7 @@ function formLanc(l, tipo){
   const ent = tipo === 'entrada';
   sheet('<h3>' + (novo ? (ent ? '💰 Nova entrada' : '🛒 Novo gasto') : '✎ Editar') + '</h3><form id="fl"><div class="field"><label for="fl-v">Valor</label><input id="fl-v" class="money" inputmode="decimal" placeholder="0,00" value="' + (l ? String(l.valor).replace('.', ',') : '') + '" required></div><div class="field"><label for="fl-d">' + (ent ? 'De onde veio' : 'O que comprou / onde') + '</label><input id="fl-d" value="' + esc(l ? l.desc : '') + '" placeholder="' + (ent ? 'Salário' : 'Supermercado') + '"></div><div class="grid2"><div class="field"><label for="fl-dt">Data</label><input id="fl-dt" type="date" value="' + (l ? l.data : hojeISO()) + '"></div><div class="field"><label for="fl-p">' + (ent ? 'Tipo' : 'Pagamento') + '</label>' + (ent ? '<select id="fl-p">' + C.TIPOS_ENTRADA.map((x) => '<option' + (cat === x ? ' selected' : '') + '>' + x + '</option>').join('') + '</select>' : '<select id="fl-p">' + ['', 'Pix', 'Débito', 'Dinheiro', 'Ticket/VA'].map((x) => '<option value="' + x + '"' + (l && !l.cartaoId && (l.pagamento === x || (x === 'Ticket/VA' && l.ticket)) ? ' selected' : '') + '>' + (x || '—') + '</option>').join('') + S.cartoes.map((c) => '<option value="card:' + c.id + '"' + (l && l.cartaoId === c.id ? ' selected' : '') + '>💳 Crédito ' + esc(c.nome) + '</option>').join('') + '<option value="Cartão"' + (l && l.pagamento === 'Cartão' && !l.cartaoId ? ' selected' : '') + '>💳 Outro cartão</option></select>') + '</div></div>' + (ent ? '' : '<div class="field"><label>Categoria</label>' + catPicker(cat) + '</div>') + '<div class="btnrow">' + (novo ? '' : '<button type="button" class="btn danger" id="fl-x">🗑️ Excluir</button>') + '<button class="btn pri" type="submit">Salvar</button></div></form>', (root) => {
     bindCat(root, (c) => cat = c);
-    $('#fl').onsubmit = (e) => { e.preventDefault(); const v = num($('#fl-v').value); if (!v) { $('#fl-v').focus(); return; } const pg = $('#fl-p').value; const o = l || { id: C.uid(), tipo, pago: true, origem: 'manual' }; Object.assign(o, { valor: v, desc: $('#fl-d').value.trim() || (ent ? pg : cat), data: $('#fl-dt').value || hojeISO(), cat: ent ? pg : cat, pagamento: ent ? '' : (pg === 'Ticket/VA' ? 'Ticket' : pg.startsWith('card:') ? 'Cartão' : pg), cartaoId: !ent && pg.startsWith('card:') ? pg.slice(5) : undefined, ticket: !ent && pg === 'Ticket/VA', upd: Date.now() }); if (novo) S.lancamentos.push(o); fechar(); save(); toast(ent ? '💰 Entrada salva!' : catInfo(cat).emoji + ' Gasto salvo!'); };
+    $('#fl').onsubmit = (e) => { e.preventDefault(); const v = num($('#fl-v').value); if (!v) { $('#fl-v').focus(); return; } const pg = $('#fl-p').value; const o = l || { id: C.uid(), tipo, pago: true, origem: 'manual' }; Object.assign(o, { valor: v, desc: $('#fl-d').value.trim() || (ent ? pg : cat), data: $('#fl-dt').value || hojeISO(), cat: ent ? pg : cat, pagamento: ent ? '' : (pg === 'Ticket/VA' ? 'Ticket' : pg.startsWith('card:') ? 'Cartão' : pg), cartaoId: !ent && pg.startsWith('card:') ? pg.slice(5) : undefined, ticket: !ent && pg === 'Ticket/VA', pago: ent || !(pg.startsWith('card:') || pg === 'Cartão'), upd: Date.now() }); if (novo) S.lancamentos.push(o); fechar(); save(); toast(ent ? '💰 Entrada salva!' : catInfo(cat).emoji + ' Gasto salvo!'); };
     if (!novo) $('#fl-x').onclick = () => { const bk = JSON.parse(JSON.stringify(l)); C.remover(S, 'lancamentos', l.id); fechar(); save(); toast('🗑️ Excluído', () => { S.excluidos = S.excluidos.filter((x) => x.id !== bk.id); bk.upd = Date.now(); S.lancamentos.push(bk); save(); }); };
   });
 }
@@ -1633,20 +1721,24 @@ function previa(frase, origem){
   else if (a.tipo === 'config_cartao') det = '<span>Cartão ' + esc(a.cartao && a.cartao.nome || '') + (a.diaVenc ? ' · vence dia ' + a.diaVenc : '') + (a.fechamento ? ' · fecha dia ' + a.fechamento : '') + '</span>';
   else if (a.tipo === 'conta') det = '<b>' + esc(a.nome) + '</b><span>Todo dia ' + a.dia + (a.valor ? ' · ' + brl(a.valor) : '') + '</span>';
   else if (a.tipo === 'compromisso') det = '<b>' + esc(a.titulo) + '</b><span>' + C.dataBR(a.data) + (a.hora ? ' às ' + a.hora : '') + '</span>';
-  else if (a.tipo === 'sonho') { const sn = C.acharSonho(S.sonhos, a.termo) || S.sonhos[0]; det = '<b class="num" style="font-size:24px">' + brl(a.valor) + '</b><span>para ' + esc(sn ? (sn.emoji || '⭐') + ' ' + sn.nome : '') + '</span>'; }
+  else if (a.tipo === 'sonho') {
+    const sn = a.termo ? C.acharSonho(S.sonhos, a.termo) : null;
+    if (sn) a.sonhoId = sn.id;
+    det = '<b class="num" style="font-size:24px">' + brl(a.valor) + '</b>' + (sn ? '<span>para ' + esc((sn.emoji || '⭐') + ' ' + sn.nome) + '</span>' : a.termo ? '<span>🌈 Novo sonho: <b>' + esc(a.termo) + '</b></span>' : '<div class="field" style="margin:0"><label for="vz-sn">Onde ' + (a.investir ? 'investir' : 'guardar') + '?</label><select id="vz-sn">' + S.sonhos.map((x) => '<option value="' + x.id + '">' + esc((x.emoji || '⭐') + ' ' + x.nome) + '</option>').join('') + '<option value="novo">➕ Criar um sonho novo…</option></select><input id="vz-sn-n" placeholder="Nome do novo sonho" hidden style="margin-top:8px;width:100%;border:1.5px solid var(--line);background:var(--surface);border-radius:14px;padding:12px 14px"></div>');
+  }
   else if (a.tipo === 'resgate') { const sn = C.acharSonho(S.sonhos, a.termo); const de = a.destino ? C.acharSonho(S.sonhos, a.destino) : null; det = '<b class="num" style="font-size:24px">' + brl(a.valor) + '</b><span>de ' + esc(sn ? (sn.emoji || '⭐') + ' ' + sn.nome + ' (tem ' + brl(C.totalSonho(sn)) + ')' : '?') + '</span><span>' + (de ? '🔁 para ' + esc(de.nome) : '💰 entra como renda do mês') + '</span>'; }
   else if (a.tipo === 'excluir') det = '<span>Vou procurar ' + (a.valor != null ? 'o lançamento de <b>' + brl(a.valor) + '</b>' : '') + (a.termo ? ' “' + esc(a.termo) + '”' : '') + '</span>';
   box.innerHTML = '<div class="result"><span class="chip ok" style="justify-self:start">' + (ROTULO[a.tipo] || a.tipo) + '</span><div style="display:grid;gap:6px">' + det + '</div><div class="btnrow"><button class="btn ghost" id="vz-ed" type="button">✎ Ajustar</button><button class="btn pri" id="vz-ok" type="button">✔ Confirmar</button></div></div>';
   const root = box; bindCat(root, (c) => { a.cat = c; });
-  $('#vz-ok').onclick = () => { const r = C.aplicar(S, a, { hoje: hoje(), origem: origem || 'voz' }); fechar(); save(); toast(r.msg.split('\n')[0].replace(/\*/g, ''), r.ok && r.item && a.tipo !== 'sonho' && r.colecao !== 'contas' && r.colecao !== 'cartoes' && !(a.tipo === 'resgate' && r.colecao === 'sonhos') ? () => { C.remover(S, r.colecao, r.item.id); save(); } : null); if (a.tipo === 'sonho' && r.ok) confete(); if (!r.ok) toast(r.msg.split('\n')[0]); };
+  const sel = $('#vz-sn'); if (sel) { const sync = () => { $('#vz-sn-n').hidden = sel.value !== 'novo'; }; sel.onchange = sync; sync(); }
+  $('#vz-ok').onclick = () => { if (sel) { if (sel.value === 'novo') { const n = $('#vz-sn-n').value.trim(); if (!n) { $('#vz-sn-n').focus(); return; } a.termo = n; delete a.sonhoId; } else a.sonhoId = sel.value; } const r = C.aplicar(S, a, { hoje: hoje(), origem: origem || 'voz' }); fechar(); save(); toast(r.msg.split('\n')[0].replace(/\*/g, ''), r.ok && r.item && a.tipo !== 'sonho' && r.colecao !== 'contas' && r.colecao !== 'cartoes' && !(a.tipo === 'resgate' && r.colecao === 'sonhos') ? () => { C.remover(S, r.colecao, r.item.id); save(); } : null); if (a.tipo === 'sonho' && r.ok) confete(); if (!r.ok) toast(r.msg.split('\n')[0]); };
   $('#vz-ed').onclick = () => { if (a.tipo === 'gasto' || a.tipo === 'entrada') { fechar(); formLanc(null, a.tipo); $('#fl-v').value = String(a.valor).replace('.', ','); $('#fl-d').value = a.desc; $('#fl-dt').value = a.data; } else if (a.tipo === 'compromisso') { fechar(); formAgenda(); $('#fa-t').value = a.titulo; $('#fa-d').value = a.data; $('#fa-h').value = a.hora; } else if (a.tipo === 'conta') { fechar(); formConta(); $('#fc-n').value = a.nome; $('#fc-v').value = a.valor ? String(a.valor).replace('.', ',') : ''; $('#fc-d').value = a.dia; } else { $('#vz-in').focus(); } };
 }
 
 // ------------------------------------------------------------ simulador do WhatsApp
 function conversar(t){
   S.chat = S.chat || []; S.chat.push({ de: 'me', txt: t, em: Date.now() });
-  const a = C.interpretar(t, { hoje: hoje(), categorias: S.categorias, sonhos: S.sonhos, cartoes: S.cartoes });
-  const r = C.aplicar(S, a, { hoje: hoje(), origem: 'whatsapp' });
+  const r = C.conversar(S, t, { hoje: hoje(), origem: 'whatsapp' });
   S.chat.push({ de: 'bot', txt: r.msg, em: Date.now() + 1000 });
   save(); const i = $('#wa-txt'); if (i) i.focus();
 }
@@ -1723,9 +1815,10 @@ function avisoVerificar(){
 
 // ------------------------------------------------------------ início
 const h0 = (location.hash || '').slice(1); if (TELAS[h0]) view.tela = h0;
+window.addEventListener('popstate', () => { profundidade = Math.max(0, profundidade - 1); const x = location.hash.slice(1) || 'inicio'; if (TELAS[x] && x !== view.tela) { fechar(); view.tela = x; render(); scrollTo(0, 0); } });
 window.addEventListener('hashchange', () => { const x = location.hash.slice(1); if (TELAS[x] && x !== view.tela) { view.tela = x; render(); } });
 render();
-if (SERVER) { fetch('/api/config').then((r) => r.json()).then((j) => { cfg = j; }).catch(() => {}); if (token) iniciarConta(true); else telaEntrar(); }
+if (SERVER) { fetch('/api/config').then((r) => r.json()).then((j) => { cfg = j; render(); }).catch(() => {}); if (token) iniciarConta(true); else telaEntrar(); }
 if (SERVER && 'serviceWorker' in navigator) { try { navigator.serviceWorker.register('/sw.js').catch(() => {}); } catch(e){} }
 })();
 </script>

@@ -19,7 +19,7 @@
     { nome: 'Pedágio/Tag', emoji: '🛣️', cor: '#8E6CEF', chaves: ['pedagio', 'tag', 'sem parar', 'conectcar', 'veloe'] },
     { nome: 'Assinaturas', emoji: '📺', cor: '#C2418C', chaves: ['netflix', 'spotify', 'assinatura', 'streaming', 'prime video', 'disney', 'globoplay', 'youtube', 'deezer', 'hbo', 'max ', 'icloud', 'google one', 'chatgpt', 'claude'] },
     { nome: 'Compras Online', emoji: '📦', cor: '#FF8A3D', chaves: ['shopee', 'shein', 'mercado livre', 'amazon', 'aliexpress', 'magalu', 'magazine', 'temu', 'americanas'] },
-    { nome: 'Casa', emoji: '🛋️', cor: '#9B6B43', chaves: ['moveis', 'movel', 'utensilio', 'havan', 'ferramenta', 'tinta', 'limpeza', 'decoracao', 'cama', 'toalha', 'eletrodomestico', 'material de construcao', 'reforma', 'chaveiro', 'faxina', 'diarista'] },
+    { nome: 'Casa', emoji: '🛋️', cor: '#9B6B43', chaves: ['guarda-roupa', 'guarda roupa', 'moveis', 'movel', 'utensilio', 'havan', 'ferramenta', 'tinta', 'limpeza', 'decoracao', 'cama', 'toalha', 'eletrodomestico', 'material de construcao', 'reforma', 'chaveiro', 'faxina', 'diarista'] },
     { nome: 'Contas da Casa', emoji: '🏠', cor: '#1F8FB5', chaves: ['luz', 'energia', 'agua', 'internet', 'gas', 'condominio', 'aluguel', 'iptu', 'telefone', 'celular conta', 'conta de celular', 'parcela do apto', 'financiamento', 'prestacao da casa', 'vaga de garagem'] },
     { nome: 'Saúde/Farmácia', emoji: '💊', cor: '#E8505B', chaves: ['farmacia', 'remedio', 'drogaria', 'droga', 'medico', 'consulta', 'exame', 'dentista', 'plano de saude', 'hospital', 'laboratorio', 'psicolog', 'fisioterap', 'otica', 'oculos', 'drogasil', 'pague menos'] },
     { nome: 'Educação', emoji: '📚', cor: '#3B6FD4', chaves: ['escola', 'curso', 'livro', 'faculdade', 'material escolar', 'mensalidade', 'apostila', 'ingles', 'aula'] },
@@ -208,6 +208,33 @@
   }
   const pagamento = (t) => (/credito|cartao/.test(t) ? 'Cartão' : /\bpix\b/.test(t) ? 'Pix' : /debito/.test(t) ? 'Débito' : /dinheiro|especie/.test(t) ? 'Dinheiro' : '');
 
+  // ------------------------------------------------------- conversa com perguntas
+  /** Interpreta e aplica; se havia uma pergunta pendente (ex.: em qual sonho guardar), resolve primeiro. */
+  function conversar(estado, texto, opts) {
+    opts = opts || {};
+    const hoje = opts.hoje || new Date();
+    const p = estado.pendente;
+    if (p && Date.now() - (p.em || 0) < 15 * 60e3) {
+      const t = sem(texto).trim();
+      if (/^(cancela|cancelar|deixa|deixa pra la|nao|esquece)\b/.test(t)) { delete estado.pendente; return { ok: true, msg: 'Tudo bem, não guardei nada. 🙂' }; }
+      if (p.tipo === 'sonho' && !extrairValor(t.replace(/^\d{1,2}$/, '')) && !/\b(gastei|paguei|comprei|recebi)\b/.test(t)) {
+        delete estado.pendente;
+        const n = t.match(/^(\d{1,2})\.?$/);
+        const lista = estado.sonhos || [];
+        const alvo = n ? lista[+n[1] - 1] : acharSonho(lista, t);
+        const acao = { tipo: 'sonho', valor: p.valor, data: p.data, investir: p.investir, sonhoId: alvo ? alvo.id : undefined, termo: alvo ? '' : String(texto).trim().replace(/^(novo|criar|cria|sonho|um sonho)\s+/i, '') };
+        if (!alvo && n) return { ok: false, msg: 'Não achei esse número. Responda de novo, por favor. 🙂', pergunta: p };
+        return aplicar(estado, acao, opts);
+      }
+      delete estado.pendente;
+    }
+    const acao = interpretar(texto, { hoje, categorias: estado.categorias, sonhos: estado.sonhos, cartoes: estado.cartoes });
+    const r = aplicar(estado, acao, opts);
+    if (r.pergunta) estado.pendente = r.pergunta;
+    r.acao = acao;
+    return r;
+  }
+
   // ------------------------------------------------------------------ cartões
   const BANCOS = [
     ['banco do brasil', 'Banco do Brasil', '#F8D117'], ['bb', 'Banco do Brasil', '#F8D117'], ['itau', 'Itaú', '#EC7000'], ['bradesco', 'Bradesco', '#CC092F'],
@@ -341,10 +368,13 @@
       return { tipo: 'excluir', valor: val ? val.valor : null, termo: sem(termo), data: dt ? dt.data : null, alvo: /compromisso|consulta|reuniao/.test(t) ? 'agenda' : /conta\b|boleto/.test(t) && !val ? 'conta' : 'lancamento' };
     }
 
-    // SONHO (guardar dinheiro)
-    if (/\b(guardei|juntei|poupei|economizei|separei|reservei|investi|depositei)\b/.test(t) && val) {
-      const resto = sem(limparDescricao(original, [val.trecho, 'guardei', 'juntei', 'poupei', 'economizei', 'separei', 'reservei', 'investi', 'depositei', 'sonho', 'para o', 'pro']));
-      return { tipo: 'sonho', valor: val.valor, termo: resto, data: dt ? dt.data : iso(hoje) };
+    // SONHO (guardar / investir / cofrinho)
+    const verboGuardar = /\b(guard(ei|ar|e|a|amos)|junt(ei|ar|e|a)|poup(ei|ar|e|a)|economiz(ei|ar)|separ(ei|ar|e|a)|reserv(ei|ar|e)|invest(i|ir|e|a|imos)|deposit(ei|ar|e|a)|apliq(uei)|aplic(ar|a|ou)|cofrinho|caixinha)\b/;
+    if (val && verboGuardar.test(t) && !/\b(gastei|comprei|paguei|guarda.?roupa|guarda.?chuva)\b/.test(t)) {
+      const restoOrig = (limparDescricao(original, [val.trecho, dt && dt.trecho, 'guardei', 'guardar', 'guarde', 'guarda', 'juntei', 'juntar', 'poupei', 'poupar', 'economizei', 'separei', 'separar', 'reservei', 'reservar', 'investi', 'investir', 'invista', 'depositei', 'depositar', 'apliquei', 'aplicar', 'coloquei', 'colocar', 'coloca', 'coloque', 'botei', 'sonho', 'meu', 'minha', 'nosso', 'nossa', 'dinheiro', 'valor'])) || '';
+      const resto = sem(restoOrig);
+      const generico = !resto || /^(cofrinho|caixinha|sonhos?|cofre|poupanca da casa|algum|um|uma)$/.test(resto.trim()) || resto.trim().length < 3;
+      return { tipo: 'sonho', valor: val.valor, termo: generico ? '' : restoOrig.replace(/\b(cofrinho|caixinha)\b/gi, '').trim(), investir: /\binvest|aplic/.test(t), data: dt ? dt.data : iso(hoje) };
     }
 
     // ENTRADA
@@ -447,10 +477,11 @@
           if (c) { const ym = mesDe(acao.data); c.pagos = c.pagos || {}; c.pagos[ym] = true; if (acao.valor) c.valor = acao.valor; c.upd = now; return { ok: true, item: c, colecao: 'contas', msg: `✅ Conta *${c.nome}* paga: ${brl(c.valor)} em ${nomeMes(ym)}. Uma preocupação a menos! 😌` }; }
         }
         const cc = garantirCartao(estado, acao.cartao);
-        const item = { id: uid(), tipo: 'gasto', data: acao.data, desc: acao.desc, cat: acao.cat, valor: acao.valor, pago: true, pagamento: cc ? 'Cartão' : (acao.pagamento || ''), cartaoId: cc ? cc.id : undefined, origem, upd: now };
+        const item = { id: uid(), tipo: 'gasto', data: acao.data, desc: acao.desc, cat: acao.cat, valor: acao.valor, pago: !cc && acao.pagamento !== 'Cartão', pagamento: cc ? 'Cartão' : (acao.pagamento || ''), cartaoId: cc ? cc.id : undefined, origem, upd: now };
         estado.lancamentos.push(item);
         let txtCartao = '';
         if (cc) { const f = fatura(estado, cc.id, mesFatura(cc, acao.data), hoje); txtCartao = `\n💳 Lançado no cartão *${cc.nome}* — fatura de ${mesCurto(f.ym)}: ${brl(f.total)}.`; }
+        else if (acao.pagamento && acao.pagamento !== 'Cartão') txtCartao = `\n✅ Pago no ${acao.pagamento === 'Dinheiro' ? 'dinheiro' : acao.pagamento} — já saiu do seu saldo do mês.`;
         else if (acao.cartaoSemBanco) txtCartao = (estado.cartoes || []).length ? `\n💳 Em qual cartão? Diga, por ex.: "no cartão ${(estado.cartoes[0] || {}).nome}".` : '\n💳 Dica: diga o banco ("cartão de crédito Itaú") que eu separo por cartão.';
         const r = resumoMes(estado, mesDe(acao.data));
         let extra = '';
@@ -522,13 +553,23 @@
         return { ok: true, item: res.entrada || s, colecao: res.entrada ? 'lancamentos' : 'sonhos', msg: `💸 Retirei ${brl(acao.valor)} de *${s.nome}*${res.entrada ? ' e lancei como renda do mês' : ''}.\n${s.emoji || '⭐'} Ficaram ${brl(totalSonho(s))} guardados${s.custo ? ` (${Math.round(totalSonho(s) / s.custo * 100)}% do sonho)` : ''}.\n${/reserva|emergencia/.test(sem(s.nome)) ? 'Tudo bem usar a reserva quando precisa, é pra isso que ela existe. Depois a gente repõe juntos! 💙' : 'Quando der, a gente repõe juntos! 💙'}` };
       }
       case 'sonho': {
-        const sonhos = estado.sonhos || [];
-        if (!sonhos.length) return { ok: false, msg: 'Você ainda não tem sonhos cadastrados. Crie um na aba ⭐ Sonhos!' };
-        let s = acharSonho(sonhos, acao.termo) || sonhos[0];
+        estado.sonhos = estado.sonhos || [];
+        const sonhos = estado.sonhos;
+        let s = acao.sonhoId ? sonhos.find((x) => x.id === acao.sonhoId) : acharSonho(sonhos, acao.termo);
+        let criado = false;
+        if (!s && acao.termo && !acao.sonhoId) {
+          const nome = acao.termo.split(' ').map((p, i) => i === 0 ? p.charAt(0).toUpperCase() + p.slice(1) : p).join(' ');
+          s = { id: uid(), nome, emoji: acao.investir ? '📈' : '⭐', custo: 0, prazo: '', guardadoAntes: 0, aportes: [], upd: now };
+          sonhos.push(s); criado = true;
+        }
+        if (!s) {
+          const pergunta = { tipo: 'sonho', valor: acao.valor, data: acao.data, investir: !!acao.investir, em: now };
+          return { ok: false, pergunta, msg: `💛 Onde você quer ${acao.investir ? 'investir' : 'guardar'} ${brl(acao.valor)}?\n` + sonhos.map((x, i) => `${i + 1}. ${x.emoji || '⭐'} ${x.nome}`).join('\n') + `\n\nResponda o *número*${sonhos.length ? '' : ''} ou o *nome de um sonho novo* (ex.: "Viagem para a praia").` };
+        }
         s.aportes = s.aportes || []; s.aportes.push({ id: uid(), data: acao.data, valor: acao.valor }); s.upd = now;
         const tot = totalSonho(s);
         const pct = s.custo ? Math.min(100, Math.round((tot / s.custo) * 100)) : 0;
-        return { ok: true, item: s, colecao: 'sonhos', msg: `⭐ Uhuul! ${brl(acao.valor)} guardados para *${s.nome}*.${s.custo ? ` Você já está em ${pct}% do caminho (${brl(tot)} de ${brl(s.custo)}).` : ''} Cada passo conta! 🚀` };
+        return { ok: true, item: s, colecao: 'sonhos', msg: `${criado ? `🌈 Criei o sonho *${s.nome}* para você!\n` : ''}⭐ Uhuul! ${brl(acao.valor)} ${acao.investir ? 'investidos' : 'guardados'} em *${s.nome}*.${s.custo ? ` Você já está em ${pct}% do caminho (${brl(tot)} de ${brl(s.custo)}).` : ''} Cada passo conta! 🚀` };
       }
       case 'excluir': {
         if (acao.alvo === 'agenda') {
@@ -658,6 +699,7 @@
     contas.forEach((c) => { porCategoria[c.cat] = (porCategoria[c.cat] || 0) + (Number(c.valor) || 0); });
     parcs.forEach((x) => { porCategoria[x.p.cat] = (porCategoria[x.p.cat] || 0) + x.p.valor; });
     const orcamento = Number(estado.perfil && estado.perfil.orcamento) || entradas;
+    const _ym = ym;
     // saldo acumulado
     let saldoAcum = Number(estado.perfil && estado.perfil.saldoInicial) || 0;
     const meses = mesesComDados(estado);
@@ -667,7 +709,9 @@
     return {
       ym, entradas, gastosDia, ticketGasto, fixas, fixasPagas, parcelas, parcs, contas, guardado, gastoTotal, sobraAntes, sobra, saldoAcum, porCategoria, orcamento,
       pctOrcamento: orcamento > 0 ? gastoTotal / orcamento : 0, pctGuardado: entradas > 0 ? guardado / entradas : 0,
-      maiorCategoria: maior ? { nome: maior[0], valor: maior[1] } : null, anuaisMes, lancamentos: L
+      maiorCategoria: maior ? { nome: maior[0], valor: maior[1] } : null, anuaisMes, lancamentos: L,
+      // dinheiro que já saiu de fato: gastos pagos (dinheiro, pix, débito), contas pagas, faturas pagas e o que foi guardado
+      jaSaiu: (() => { const g = L.filter((l) => l.tipo === 'gasto' && !l.ticket && !l.cartaoId && l.pagamento !== 'Cartão').reduce((a, b) => a + b.valor, 0); const fat = (estado.cartoes || []).reduce((a, c) => { const f = fatura(estado, c.id, ym); return a + (f ? f.pago : 0); }, 0); const parcSem = parcs.filter((x) => !x.p.cartaoId).reduce((a, b) => a + b.p.valor, 0); return g + fixasPagas + fat + parcSem + guardado; })()
     };
   }
   function resumoSimples(estado, ym) {
@@ -736,7 +780,7 @@
   }
   function textoAjuda(estado) {
     const n = estado.perfil && estado.perfil.nome ? ', ' + estado.perfil.nome.split(' ')[0] : '';
-    return `Oi${n}! 💙 Eu sou o *Sonhaí*, seu parceiro das finanças.\n\nVocê pode me mandar texto ou áudio:\n🛒 "gastei 45,90 no mercado"\n💰 "recebi 3500 de salário"\n🛍️ "comprei uma TV de 2000 em 10x no cartão Nubank"\n💳 "gastei 10 na lanchonete no cartão de crédito Itaú"\n💳 "paguei a fatura do Itaú" • "paguei 500 da fatura do Bradesco"\n🗓️ "conta de luz vence dia 10, 150 reais"\n📌 "dentista quinta às 14h"\n⭐ "guardei 200 para a viagem"\n💸 "retire 500 da reserva de emergência e coloque como renda"\n🔁 "transfere 300 da reserva para a viagem"\n🗑️ "exclui o gasto de 45,90"\n↩️ "desfazer"\n📊 "resumo" • "contas a pagar" • "agenda"`;
+    return `Oi${n}! 💙 Eu sou o *Sonhaí*, seu parceiro das finanças.\n\nVocê pode me mandar texto ou áudio:\n🛒 "gastei 45,90 no mercado"\n💰 "recebi 3500 de salário"\n🛍️ "comprei uma TV de 2000 em 10x no cartão Nubank"\n💳 "gastei 10 na lanchonete no cartão de crédito Itaú"\n💳 "paguei a fatura do Itaú" • "paguei 500 da fatura do Bradesco"\n🗓️ "conta de luz vence dia 10, 150 reais"\n📌 "dentista quinta às 14h"\n⭐ "guardei 200 para a viagem" • "investi 500"\n💸 "retire 500 da reserva de emergência e coloque como renda"\n🔁 "transfere 300 da reserva para a viagem"\n🗑️ "exclui o gasto de 45,90"\n↩️ "desfazer"\n📊 "resumo" • "contas a pagar" • "agenda"`;
   }
   function barra(p) { const n = Math.max(0, Math.min(10, Math.round(p * 10))); return '🟩'.repeat(Math.min(n, 7)) + (n > 7 ? '🟨'.repeat(Math.min(n - 7, 2)) : '') + (n > 9 ? '🟥' : '') + '⬜'.repeat(10 - n); }
   function mensagemHumor(r) {
@@ -782,7 +826,7 @@
   return {
     CATEGORIAS, TIPOS_ENTRADA, INCENTIVOS, MESES, sem, uid, iso, pad, brl, dataBR, mesDe, nomeMes, mesCurto, somaMes, difMeses, diasNoMes, agora,
     BANCOS, detectarCartao, garantirCartao, mesFatura, fatura, pagarFatura, faturasAVencer, rotuloFatura,
-    interpretar, aplicar, remover, acharSonho, retirarDoSonho, estadoVazio, resumoMes, mesesComDados, parcelaNoMes, contaNoMes, contasAVencer, contasAtrasadas, totalSonho,
+    conversar, interpretar, aplicar, remover, acharSonho, retirarDoSonho, estadoVazio, resumoMes, mesesComDados, parcelaNoMes, contaNoMes, contasAVencer, contasAtrasadas, totalSonho,
     textoResumo, textoContas, textoAgenda, textoAjuda, mensagemHumor, barra, mesclar, adivinharCategoria, extrairValor, extrairData, extrairHora
   };
 });

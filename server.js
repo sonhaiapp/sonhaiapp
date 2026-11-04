@@ -40,7 +40,9 @@ const CFG = {
   template: process.env.WHATSAPP_TEMPLATE || '', // ex.: lembrete_sonhai
   templateLang: process.env.WHATSAPP_TEMPLATE_LANG || 'pt_BR',
   openai: process.env.OPENAI_API_KEY || '',
-  modeloAudio: process.env.TRANSCRIBE_MODEL || 'whisper-1',
+  groq: process.env.GROQ_API_KEY || '',
+  modeloAudio: process.env.TRANSCRIBE_MODEL || '',
+  tgToken: process.env.TELEGRAM_TOKEN || '',
   tz: process.env.APP_TZ || 'America/Sao_Paulo',
   admin: process.env.ADMIN_KEY || '',
   dados: process.env.DATA_DIR || path.join(__dirname, 'data')
@@ -74,9 +76,9 @@ async function carregarDB() {
   }
   let de = 0; const passo = 1000;
   for (;;) {
-    const linhas = await sb('GET', `kv?select=chave,valor&order=chave&offset=${de}&limit=${passo}`, null, 'count=none');
+    const linhas = await sb('GET', `kv?select=chave,valor&chave=not.like.backup*&order=chave&offset=${de}&limit=${passo}`, null, 'count=none');
     for (const l of linhas) {
-      if (l.chave === 'sys') { DB.tokens = l.valor.tokens || {}; DB.resets = l.valor.resets || {}; }
+      if (l.chave === 'sys') { DB.tokens = l.valor.tokens || {}; DB.resets = l.valor.resets || {}; DB.tg = l.valor.tg || {}; DB.tgcodigos = l.valor.tgcodigos || {}; }
       else if (l.chave.startsWith('u:')) DB.usuarios[l.chave.slice(2)] = l.valor;
       salvos.set(l.chave, JSON.stringify(l.valor));
     }
@@ -99,7 +101,7 @@ async function gravar() {
   gravando = true;
   try {
     const atual = new Map();
-    atual.set('sys', JSON.stringify({ tokens: DB.tokens, resets: DB.resets }));
+    atual.set('sys', JSON.stringify({ tokens: DB.tokens, resets: DB.resets, tg: DB.tg || {}, tgcodigos: DB.tgcodigos || {} }));
     for (const [k, u] of Object.entries(DB.usuarios)) if (u) atual.set('u:' + k, JSON.stringify(u));
     const mudou = [];
     for (const [k, txt] of atual) if (salvos.get(k) !== txt) mudou.push({ chave: k, valor: JSON.parse(txt), atualizado: new Date().toISOString() });
@@ -131,6 +133,9 @@ DB.resets = DB.resets || {};
 }
 
 const SESSAO_DIAS = 180;
+// usuário(s) master: números separados por vírgula na variável ADMIN_FONES
+const ADMINS = new Set(String(process.env.ADMIN_FONES || '').split(/[,;\s]+/).filter(Boolean).map((f) => chaveFone(f)));
+const ehAdmin = (u) => !!u && ADMINS.has(chaveFone(u.fone));
 function novaSessao(u) {
   const t = crypto.randomBytes(24).toString('base64url');
   DB.tokens[t] = { k: chaveFone(u.fone), em: Date.now() };
@@ -191,6 +196,8 @@ async function enviar(u, texto, opts = {}) {
   u.estado.chat.push({ de: 'bot', txt: texto, em: Date.now() });
   if (u.estado.chat.length > 200) u.estado.chat = u.estado.chat.slice(-200);
   salvarDB();
+  const canal = opts.canal || (u.telegram && (DEMO || u.verificado === false || u.canal === 'telegram') ? 'telegram' : 'whatsapp');
+  if (canal === 'telegram') { if (u.telegram) return tgEnviar(u.telegram, texto); return; }
   if (DEMO) { log('[DEMO → ' + u.fone + ']\n' + texto); return; }
   const dentroJanela = Date.now() - (u.ultimaMsg || 0) < 23.5 * 3600 * 1000;
   try {
@@ -210,17 +217,70 @@ async function baixarMidia(id) {
   return { buf: Buffer.from(await r.arrayBuffer()), tipo: meta.mime_type || 'audio/ogg' };
 }
 async function transcrever(buf, tipo) {
-  if (!CFG.openai) throw new Error('Configure OPENAI_API_KEY para entender áudios.');
+  if (!CFG.groq && !CFG.openai) throw new Error('Configure GROQ_API_KEY (grátis) ou OPENAI_API_KEY para entender áudios.');
   const ext = /mpeg|mp3/.test(tipo) ? 'mp3' : /mp4|m4a|aac/.test(tipo) ? 'm4a' : /webm/.test(tipo) ? 'webm' : /wav/.test(tipo) ? 'wav' : 'ogg';
   const fd = new FormData();
   fd.append('file', new Blob([buf], { type: tipo.split(';')[0] }), 'audio.' + ext);
-  fd.append('model', CFG.modeloAudio);
+  fd.append('model', CFG.modeloAudio || (CFG.groq ? 'whisper-large-v3-turbo' : 'whisper-1'));
   fd.append('language', 'pt');
   fd.append('prompt', 'Gastos, contas e compromissos em reais. Ex.: gastei 45,90 no mercado; conta de luz vence dia 10; dentista amanhã às 15h.');
-  const r = await fetch('https://api.openai.com/v1/audio/transcriptions', { method: 'POST', headers: { Authorization: 'Bearer ' + CFG.openai }, body: fd });
+  const base = CFG.groq ? (process.env.GROQ_API_BASE || 'https://api.groq.com/openai/v1') : 'https://api.openai.com/v1';
+  const r = await fetch(base + '/audio/transcriptions', { method: 'POST', headers: { Authorization: 'Bearer ' + (CFG.groq || CFG.openai) }, body: fd });
   const j = await r.json();
   if (!r.ok) throw new Error('transcrição: ' + JSON.stringify(j.error || j));
   return String(j.text || '').trim();
+}
+
+// ------------------------------------------------------------------ Telegram (grátis)
+let TG_BOT = '';
+const TG_API = process.env.TELEGRAM_API || 'https://api.telegram.org';
+const TG_SEGREDO = CFG.tgToken ? crypto.createHash('sha256').update('sonhai:' + CFG.tgToken).digest('hex').slice(0, 32) : '';
+async function tgApi(metodo, corpo) {
+  const r = await fetch(`${TG_API}/bot${CFG.tgToken}/${metodo}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo || {}) });
+  const j = await r.json().catch(() => ({}));
+  if (!j.ok) throw new Error('Telegram: ' + (j.description || r.status));
+  return j.result;
+}
+async function tgEnviar(chatId, texto) {
+  try { await tgApi('sendMessage', { chat_id: chatId, text: texto.slice(0, 4000), parse_mode: 'Markdown', disable_web_page_preview: true }); }
+  catch (e) { try { await tgApi('sendMessage', { chat_id: chatId, text: texto.replace(/\*/g, '').slice(0, 4000), disable_web_page_preview: true }); } catch (e2) { log('Telegram envio', e2.message); } }
+}
+async function tgIniciar() {
+  if (!CFG.tgToken) return;
+  try {
+    TG_BOT = (await tgApi('getMe')).username;
+    if (/^https:/.test(CFG.url)) await tgApi('setWebhook', { url: CFG.url + '/telegram', secret_token: TG_SEGREDO, allowed_updates: ['message'] });
+    await tgApi('setMyCommands', { commands: [{ command: 'resumo', description: 'Resumo do mês' }, { command: 'contas', description: 'Contas a pagar' }, { command: 'agenda', description: 'Compromissos de hoje' }, { command: 'ajuda', description: 'O que posso dizer' }] });
+    log('🤖 Telegram ligado: @' + TG_BOT);
+  } catch (e) { log('❌ Telegram:', e.message); }
+}
+async function tgReceber(msg) {
+  const chatId = msg.chat && msg.chat.id; if (!chatId) return;
+  const texto = String(msg.text || '').trim();
+  DB.tg = DB.tg || {}; DB.tgcodigos = DB.tgcodigos || {};
+  const m = texto.match(/^\/start\s+(\S+)/);
+  if (m) {
+    const c = DB.tgcodigos[m[1]];
+    if (!c || Date.now() - c.em > 30 * 60e3) return tgEnviar(chatId, '⏰ Esse link expirou. No app, abra *Mais → Mensagens* e toque em *Conectar Telegram* de novo.');
+    const u = DB.usuarios[c.k]; if (!u) return;
+    if (u.telegram && u.telegram !== chatId) delete DB.tg[u.telegram];
+    u.telegram = chatId; DB.tg[chatId] = c.k; delete DB.tgcodigos[m[1]]; u.rev++; salvarDB();
+    return tgEnviar(chatId, `✅ Pronto, ${u.estado.perfil.nome || ''}! Seu Telegram está ligado ao Sonhaí. 💙\n\n` + CC.textoAjuda(u.estado).split('\n').slice(2).join('\n'));
+  }
+  const k = DB.tg[chatId]; const u = k && DB.usuarios[k];
+  if (!u) return tgEnviar(chatId, 'Oi! 💙 Eu sou o *Sonhaí*.\nPara começar, crie sua conta em ' + CFG.url + ' e depois, no app, toque em *Mais → Mensagens → Conectar Telegram*.');
+  const t = texto.replace(/^\/(resumo|contas|agenda|ajuda)\b.*/, (x, c) => ({ resumo: 'resumo', contas: 'contas a pagar', agenda: 'agenda', ajuda: 'ajuda' })[c]);
+  if (msg.voice || msg.audio) {
+    try {
+      const f = await tgApi('getFile', { file_id: (msg.voice || msg.audio).file_id });
+      const r = await fetch(`${TG_API}/file/bot${CFG.tgToken}/${f.file_path}`);
+      const txt = await transcrever(Buffer.from(await r.arrayBuffer()), (msg.voice || msg.audio).mime_type || 'audio/ogg');
+      if (!txt) throw new Error('vazio');
+      return processar(u, txt, true, 'telegram');
+    } catch (e) { log('áudio telegram', e.message); return tgEnviar(chatId, '🙈 Não consegui entender o áudio. Pode repetir ou escrever?'); }
+  }
+  if (!t) return tgEnviar(chatId, 'Por enquanto eu entendo textos e áudios. 😊 Mande /ajuda para ver exemplos.');
+  return processar(u, t, false, 'telegram');
 }
 
 // ------------------------------------------------------------------ conversa
@@ -237,42 +297,70 @@ async function receber(fone, texto, origemAudio) {
     if (t0 === 'nova conta') { DB.usuarios[chaveFone(fone)] = null; delete DB.usuarios[chaveFone(fone)]; salvarDB(); return receber(fone, 'oi'); }
     return enviar(u, '🔐 Existe uma conta Sonhaí com este número esperando confirmação.\nSe foi você que criou, mande o código que aparece no app, assim: *SONHAI 1234*\n\nNão foi você? Responda *NOVA CONTA* para começar a sua.', { forcarTexto: true });
   }
-  if (/^(esqueci (a |minha )?senha|recuperar senha|trocar senha|nova senha)$/.test(t0)) {
-    const cod = crypto.randomBytes(16).toString('base64url');
-    DB.resets[cod] = { k: chaveFone(u.fone), em: Date.now() }; salvarDB();
-    return enviar(u, `🔐 Para criar uma senha nova, toque no link (vale por 30 minutos):\n${CFG.url}/?r=${cod}\n\nSe não foi você que pediu, é só ignorar.`, { forcarTexto: true });
+  if (novo) {
+    u.estado.chat.push({ de: 'me', txt: texto, em: Date.now() });
+    await enviar(u, `Olá! 💙 Que alegria ter você aqui.\nEu sou o *Sonhaí* e vou te ajudar a organizar o dinheiro sem complicação.\n\n📲 Abra seu app e crie sua senha:\n${linkEntrada(u)}\n\nComo você gostaria de ser chamado(a)? Responda: "meu nome é ..."`);
+    if (/^(oi|ola|bom dia|boa tarde|boa noite|comecar|começar)\b/.test(t0)) return;
   }
+  return processar(u, texto, origemAudio, 'whatsapp');
+}
+/** Entende o pedido (texto já transcrito) e responde pelo mesmo canal. */
+async function processar(u, texto, origemAudio, canal) {
+  const env = (msg, o) => enviar(u, msg, Object.assign({ canal }, o || {}));
   u.estado.chat.push({ de: 'me', txt: (origemAudio ? '🎤 ' : '') + texto, em: Date.now() });
   const hoje = CC.agora(CFG.tz);
-  const t = CC.sem(texto);
-  if (novo) {
-    await enviar(u, `Olá! 💙 Que alegria ter você aqui.\nEu sou o *Sonhaí* e vou te ajudar a organizar o dinheiro sem complicação.\n\n📲 Abra seu app e crie sua senha:\n${linkEntrada(u)}\n\nComo você gostaria de ser chamado(a)? Responda: "meu nome é ..."`);
-    if (/^(oi|ola|bom dia|boa tarde|boa noite|comecar|começar)\b/.test(t)) return;
+  const t = CC.sem(texto).trim();
+  if (/^(esqueci (a |minha )?senha|recuperar senha|trocar senha|nova senha)$/.test(t)) {
+    const cod = crypto.randomBytes(16).toString('base64url');
+    DB.resets[cod] = { k: chaveFone(u.fone), em: Date.now() }; salvarDB();
+    return env(`🔐 Para criar uma senha nova, toque no link (vale por 30 minutos):\n${CFG.url}/?r=${cod}\n\nSe não foi você que pediu, é só ignorar.`, { forcarTexto: true });
   }
   let m = t.match(/^(meu nome e|me chame de|pode me chamar de|sou o|sou a)\s+(.+)/);
   if (m) {
     const nome = texto.split(/\s+/).slice(texto.split(/\s+/).length - m[2].split(/\s+/).length).join(' ').replace(/[.!]$/, '');
     u.estado.perfil.nome = nome.charAt(0).toUpperCase() + nome.slice(1); u.estado.perfilUpd = Date.now(); u.rev++;
-    return enviar(u, `Prazer, ${u.estado.perfil.nome}! 🤗\n\n` + CC.textoAjuda(u.estado).split('\n').slice(2).join('\n'));
+    return env(`Prazer, ${u.estado.perfil.nome}! 🤗\n\n` + CC.textoAjuda(u.estado).split('\n').slice(2).join('\n'));
   }
-  if (/^apagar meus dados$/.test(t)) return enviar(u, '⚠️ Isso apaga TODOS os seus lançamentos, contas, sonhos e compromissos, sem volta.\nSe tiver certeza, responda exatamente: *CONFIRMAR APAGAR*');
+  if (/^apagar meus dados$/.test(t)) return env('⚠️ Isso apaga TODOS os seus lançamentos, contas, sonhos e compromissos, sem volta.\nSe tiver certeza, responda exatamente: *CONFIRMAR APAGAR*');
   if (/^confirmar apagar$/.test(t)) {
     for (const [tk, v] of Object.entries(DB.tokens)) if (v.k === chaveFone(u.fone)) delete DB.tokens[tk];
     delete DB.usuarios[chaveFone(u.fone)]; salvarDB();
-    if (!DEMO) await waApi(`${CFG.waPhoneId}/messages`, { messaging_product: 'whatsapp', to: u.fone, type: 'text', text: { body: '🗑️ Pronto, seus dados foram apagados. Se quiser voltar, é só mandar "oi". Foi um prazer! 💙' } }).catch(() => {});
+    const adeus = '🗑️ Pronto, seus dados foram apagados. Se quiser voltar, é só criar uma conta nova. Foi um prazer! 💙';
+    if (u.telegram) { if (DB.tg) delete DB.tg[u.telegram]; if (canal === 'telegram') await tgEnviar(u.telegram, adeus); }
+    if (canal === 'whatsapp' && !DEMO) await waApi(`${CFG.waPhoneId}/messages`, { messaging_product: 'whatsapp', to: u.fone, type: 'text', text: { body: adeus } }).catch(() => {});
     return;
   }
-  if (/^(link|app|aplicativo|abrir app|meu app)\b/.test(t)) return enviar(u, `📲 Seu acesso ao app (vale para este celular; não compartilhe):\n${linkEntrada(u)}`, { forcarTexto: true });
+  if (/^(link|app|aplicativo|abrir app|meu app)\b/.test(t)) return env(`📲 Seu acesso ao app (vale para este celular; não compartilhe):\n${linkEntrada(u)}`, { forcarTexto: true });
   m = t.match(/^(orcamento|meu orcamento|limite do mes)\D*([\d.,]+)/);
-  if (m) { u.estado.perfil.orcamento = CC.extrairValor(m[2]).valor; u.estado.perfilUpd = Date.now(); u.rev++; return enviar(u, `🎯 Orçamento do mês definido: ${CC.brl(u.estado.perfil.orcamento)}. Eu te aviso quando estiver chegando perto!`); }
+  if (m) { u.estado.perfil.orcamento = CC.extrairValor(m[2]).valor; u.estado.perfilUpd = Date.now(); u.rev++; return env(`🎯 Orçamento do mês definido: ${CC.brl(u.estado.perfil.orcamento)}. Eu te aviso quando estiver chegando perto!`); }
 
-  const acao = CC.interpretar(texto, { hoje, categorias: u.estado.categorias, sonhos: u.estado.sonhos, cartoes: u.estado.cartoes });
-  const r = CC.aplicar(u.estado, acao, { hoje, origem: 'whatsapp' });
+  const r = CC.conversar(u.estado, texto, { hoje, origem: canal });
+  const acao = r.acao || {};
   if (r.ok && r.colecao) u.rev++;
   let resp = r.msg;
   if (origemAudio) resp = `🎤 Entendi: "${texto}"\n\n` + resp;
   if (r.ok && r.item && ['gasto', 'entrada', 'parcelado', 'compromisso', 'conta', 'resgate'].includes(acao.tipo)) resp += '\n\nErrou? Responda *desfazer*.';
-  await enviar(u, resp);
+  await env(resp);
+}
+
+// ------------------------------------------------------------------ backup diário (guarda 3 dias)
+async function backupDiario(hojeIso) {
+  if (DB.ultimoBackup === hojeIso) return;
+  DB.ultimoBackup = hojeIso;
+  const copia = { geradoEm: new Date().toISOString(), usuarios: DB.usuarios };
+  const limite = new Date(Date.now() - 3 * 864e5).toISOString().slice(0, 10);
+  try {
+    if (USA_SB) {
+      const txt = JSON.stringify(copia);
+      if (Buffer.byteLength(txt) > 50 * 1048576) return log('backup grande demais para o plano grátis; use o backup geral do painel master');
+      await sb('POST', 'kv?on_conflict=chave', [{ chave: 'backup:' + hojeIso, valor: copia, atualizado: new Date().toISOString() }], 'resolution=merge-duplicates,return=minimal');
+      await sb('DELETE', 'kv?chave=like.backup*&chave=lt.backup:' + limite);
+    } else {
+      fs.writeFileSync(path.join(CFG.dados, 'backup-' + hojeIso + '.json'), JSON.stringify(copia));
+      for (const f of fs.readdirSync(CFG.dados)) { const m = f.match(/^backup-(\d{4}-\d{2}-\d{2})\.json$/); if (m && m[1] < limite) fs.unlinkSync(path.join(CFG.dados, f)); }
+    }
+    log('💾 Backup diário salvo:', hojeIso);
+  } catch (e) { DB.ultimoBackup = ''; log('backup', e.message); }
 }
 
 // ------------------------------------------------------------------ lembretes
@@ -311,8 +399,9 @@ async function ciclo() {
   const agora = CC.agora(CFG.tz);
   const hojeIso = CC.iso(agora);
   const hm = CC.pad(agora.getHours()) + ':' + CC.pad(agora.getMinutes());
+  if (hm >= '03:00') backupDiario(hojeIso);
   for (const u of Object.values(DB.usuarios)) {
-    if (!u || u.verificado === false) continue;
+    if (!u || (u.verificado === false && !u.telegram)) continue;
     const e = u.estado; u.enviados = u.enviados || {};
     const marca = async (chave, fn) => { if (u.enviados[chave]) return; u.enviados[chave] = Date.now(); salvarDB(); const t = fn(); if (t) await enviar(u, t); };
     try {
@@ -338,7 +427,12 @@ function lerCorpo(req, limite = 20 * 1024 * 1024) {
 }
 // rotas de teste: só no seu computador, ou com a ADMIN_KEY
 const testeLiberado = (req) => CFG.admin ? req.headers['x-admin-key'] === CFG.admin : /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(req.headers.host || '');
-const autenticar = (req) => porToken((req.headers.authorization || '').replace(/^Bearer\s+/i, ''));
+function autenticar(req) {
+  const u = porToken((req.headers.authorization || '').replace(/^Bearer\s+/i, ''));
+  if (!u || u.bloqueado) return null;
+  if (Date.now() - (u.ultimo || 0) > 3600e3) { u.ultimo = Date.now(); salvarDB(); }
+  return u;
+}
 
 const servidor = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
@@ -382,7 +476,54 @@ const servidor = http.createServer(async (req, res) => {
       if (USA_SB && Date.now() - (global.ultimoToqueSB || 0) > 6 * 3600e3) { global.ultimoToqueSB = Date.now(); sb('GET', 'kv?select=chave&limit=1').catch((e) => log('saúde', e.message)); }
       return json(res, 200, { ok: true, whatsapp: !DEMO, banco: USA_SB ? 'supabase' : 'arquivo', usuarios: Object.keys(DB.usuarios).length });
     }
-    if (rota === '/api/config') return json(res, 200, { whatsapp: process.env.WHATSAPP_NUMERO_EXIBICAO || '', demo: DEMO });
+    if (rota === '/api/config') return json(res, 200, { whatsapp: DEMO ? '' : process.env.WHATSAPP_NUMERO_EXIBICAO || '', demo: DEMO, telegram: TG_BOT });
+    if (rota === '/telegram' && req.method === 'POST') {
+      if (!CFG.tgToken || req.headers['x-telegram-bot-api-secret-token'] !== TG_SEGREDO) { res.writeHead(401); return res.end(); }
+      const corpo = JSON.parse((await lerCorpo(req, 1024 * 1024)).toString() || '{}');
+      res.writeHead(200); res.end('ok');
+      if (corpo.message) tgReceber(corpo.message).catch((e) => log('telegram', e.message));
+      return;
+    }
+    if (rota === '/api/telegram/link' && req.method === 'POST') {
+      const u = autenticar(req); if (!u) return json(res, 401, { erro: 'Entre novamente.' });
+      if (!TG_BOT) return json(res, 400, { erro: 'O Telegram ainda não foi ligado no servidor.' });
+      DB.tgcodigos = DB.tgcodigos || {};
+      const cod = crypto.randomBytes(12).toString('base64url');
+      DB.tgcodigos[cod] = { k: chaveFone(u.fone), em: Date.now() }; salvarDB();
+      return json(res, 200, { link: `https://t.me/${TG_BOT}?start=${cod}`, bot: TG_BOT });
+    }
+    if (rota.startsWith('/api/admin/')) {
+      const a = autenticar(req); if (!ehAdmin(a)) return json(res, 403, { erro: 'Acesso restrito ao usuário master.' });
+      if (rota === '/api/admin/usuarios') {
+        const agora = Date.now(); const dia = 864e5;
+        const lista = Object.entries(DB.usuarios).filter(([, u]) => u).map(([k, u]) => ({
+          k, nome: u.estado.perfil.nome || '', fone: u.fone, criado: new Date(u.criadoEm || agora).toISOString().slice(0, 10),
+          ultimo: u.ultimo ? new Date(u.ultimo).toISOString().slice(0, 10) : (u.ultimaMsg ? new Date(u.ultimaMsg).toISOString().slice(0, 10) : ''),
+          ultimoMs: Math.max(u.ultimo || 0, u.ultimaMsg || 0), lancamentos: (u.estado.lancamentos || []).length,
+          telegram: !!u.telegram, whatsapp: !DEMO && u.verificado !== false && !!u.ultimaMsg, temSenha: !!u.senha, bloqueado: !!u.bloqueado, admin: ehAdmin(u)
+        })).sort((x, y) => y.ultimoMs - x.ultimoMs);
+        const totais = { usuarios: lista.length, novos7: Object.values(DB.usuarios).filter((u) => u && agora - (u.criadoEm || 0) < 7 * dia).length,
+          ativos7: lista.filter((u) => agora - u.ultimoMs < 7 * dia).length, ativos30: lista.filter((u) => agora - u.ultimoMs < 30 * dia).length,
+          telegram: lista.filter((u) => u.telegram).length, whatsapp: lista.filter((u) => u.whatsapp).length,
+          lancamentos: lista.reduce((x, u) => x + u.lancamentos, 0), bytes: Buffer.byteLength(JSON.stringify(DB.usuarios)) };
+        return json(res, 200, { usuarios: lista, totais });
+      }
+      if (rota === '/api/admin/bloquear' && req.method === 'POST') {
+        let b = {}; try { b = JSON.parse((await lerCorpo(req, 64 * 1024)).toString() || '{}'); } catch (e) { /* vazio */ }
+        const u = DB.usuarios[b.k];
+        if (!u || ehAdmin(u)) return json(res, 400, { erro: 'Usuário não encontrado.' });
+        u.bloqueado = !!b.bloquear;
+        if (u.bloqueado) for (const [tk, v] of Object.entries(DB.tokens)) if (v.k === b.k) delete DB.tokens[tk];
+        salvarDB(); return json(res, 200, { ok: true });
+      }
+      if (rota === '/api/admin/backup') return json(res, 200, { geradoEm: new Date().toISOString(), versao: 1, usuarios: DB.usuarios });
+      return json(res, 404, { erro: 'Rota não encontrada.' });
+    }
+    if (rota === '/api/telegram/desligar' && req.method === 'POST') {
+      const u = autenticar(req); if (!u) return json(res, 401, { erro: 'Entre novamente.' });
+      if (u.telegram && DB.tg) delete DB.tg[u.telegram]; delete u.telegram; salvarDB();
+      return json(res, 200, { ok: true });
+    }
     const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
     const corpoJSON = async () => { try { return JSON.parse((await lerCorpo(req, 64 * 1024)).toString() || '{}'); } catch (e) { return {}; } };
     if (rota === '/api/cadastro' && req.method === 'POST') {
@@ -408,6 +549,8 @@ const servidor = http.createServer(async (req, res) => {
       const u = DB.usuarios[k];
       if (!u || !u.senha || !confereSenha(b.senha || '', u.senha)) { errou('f:' + k); errou('ip:' + ip); return json(res, 401, { erro: u && !u.senha ? 'Você ainda não criou senha. Mande "esqueci minha senha" para o Sonhaí no WhatsApp.' : 'Número ou senha incorretos.' }); }
       tentativas.delete('f:' + k);
+      if (u.bloqueado) return json(res, 403, { erro: 'Seu acesso está suspenso. Fale com o suporte do Sonhaí.' });
+      u.ultimo = Date.now();
       return json(res, 200, { token: novaSessao(u) });
     }
     if (rota === '/api/redefinir' && req.method === 'POST') {
@@ -422,7 +565,7 @@ const servidor = http.createServer(async (req, res) => {
     }
     if (rota === '/api/eu') {
       const u = autenticar(req); if (!u) return json(res, 401, { erro: 'Entre novamente.' });
-      return json(res, 200, { fone: u.fone, nome: u.estado.perfil.nome, temSenha: !!u.senha, verificado: u.verificado !== false, codigo: u.verificado === false ? u.codigo : '' });
+      return json(res, 200, { admin: ehAdmin(u), telegram: !!u.telegram, fone: u.fone, nome: u.estado.perfil.nome, temSenha: !!u.senha, verificado: u.verificado !== false, codigo: u.verificado === false ? u.codigo : '' });
     }
     if (rota === '/api/senha' && req.method === 'POST') {
       const u = autenticar(req); if (!u) return json(res, 401, { erro: 'Entre novamente.' });
@@ -483,7 +626,8 @@ const servidor = http.createServer(async (req, res) => {
   servidor.listen(CFG.porta, () => {
   log(`💙 Sonhaí rodando em ${CFG.url} (porta ${CFG.porta})`);
   if (DEMO) log('⚠️  WhatsApp não configurado: modo demonstração (mensagens aparecem aqui no terminal). Veja o GUIA.');
-  if (!CFG.openai) log('⚠️  OPENAI_API_KEY ausente: áudios do WhatsApp não serão transcritos.');
+  if (!CFG.groq && !CFG.openai) log('⚠️  Sem GROQ_API_KEY/OPENAI_API_KEY: áudios não serão transcritos.');
   log(USA_SB ? '🗄️  Dados no Supabase.' : '🗄️  Dados em ' + ARQ);
+  tgIniciar();
   });
 })();
