@@ -48,6 +48,8 @@ const CFG = {
   dados: process.env.DATA_DIR || path.join(__dirname, 'data')
 };
 const DEMO = !CFG.waToken || !CFG.waPhoneId;
+const PRODUCAO = !!process.env.RENDER || /^https:/.test(process.env.PUBLIC_URL || '');
+const LOG_MENSAGENS = !PRODUCAO || process.env.LOG_MENSAGENS === '1'; // em produção não registra mensagens (LGPD)
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
 // ------------------------------------------------------------------ banco de dados
@@ -78,7 +80,7 @@ async function carregarDB() {
   for (;;) {
     const linhas = await sb('GET', `kv?select=chave,valor&chave=not.like.backup*&order=chave&offset=${de}&limit=${passo}`, null, 'count=none');
     for (const l of linhas) {
-      if (l.chave === 'sys') { DB.tokens = l.valor.tokens || {}; DB.resets = l.valor.resets || {}; DB.tg = l.valor.tg || {}; DB.tgcodigos = l.valor.tgcodigos || {}; DB.convites = l.valor.convites || {}; DB.config = l.valor.config || {}; }
+      if (l.chave === 'sys') { DB.tokens = l.valor.tokens || {}; DB.resets = l.valor.resets || {}; DB.tg = l.valor.tg || {}; DB.tgcodigos = l.valor.tgcodigos || {}; DB.convites = l.valor.convites || {}; DB.config = l.valor.config || {}; DB.auditoria = l.valor.auditoria || []; }
       else if (l.chave.startsWith('u:')) DB.usuarios[l.chave.slice(2)] = l.valor;
       salvos.set(l.chave, JSON.stringify(l.valor));
     }
@@ -101,7 +103,7 @@ async function gravar() {
   gravando = true;
   try {
     const atual = new Map();
-    atual.set('sys', JSON.stringify({ tokens: DB.tokens, resets: DB.resets, tg: DB.tg || {}, tgcodigos: DB.tgcodigos || {}, convites: DB.convites || {}, config: DB.config || {} }));
+    atual.set('sys', JSON.stringify({ tokens: DB.tokens, resets: DB.resets, tg: DB.tg || {}, tgcodigos: DB.tgcodigos || {}, convites: DB.convites || {}, config: DB.config || {}, auditoria: DB.auditoria || [] }));
     for (const [k, u] of Object.entries(DB.usuarios)) if (u) atual.set('u:' + k, JSON.stringify(u));
     const mudou = [];
     for (const [k, txt] of atual) if (salvos.get(k) !== txt) mudou.push({ chave: k, valor: JSON.parse(txt), atualizado: new Date().toISOString() });
@@ -129,6 +131,9 @@ DB.usuarios = DB.usuarios || {}; DB.tokens = DB.tokens || {};
 // migração: chaves antigas -> chave nova; tokens antigos (texto) -> objeto
 for (const k of Object.keys(DB.usuarios)) { const nk = chaveFone(k); if (nk !== k && !DB.usuarios[nk]) { DB.usuarios[nk] = DB.usuarios[k]; delete DB.usuarios[k]; } }
 for (const [t, v] of Object.entries(DB.tokens)) if (typeof v === 'string') DB.tokens[t] = { k: chaveFone(v), em: Date.now() };
+// segurança: sessões e códigos ficam guardados só como hash (se o banco vazar, não dá para usar)
+for (const nome of ['tokens', 'resets', 'convites', 'tgcodigos']) { const o = DB[nome] || {}; const novo = {}; for (const [kk, v] of Object.entries(o)) novo[/^[0-9a-f]{64}$/.test(kk) ? kk : H(kk)] = v; DB[nome] = novo; }
+DB.auditoria = DB.auditoria || [];
 DB.resets = DB.resets || {};
 }
 
@@ -163,13 +168,23 @@ const msgExpirado = (u) => `⏳ Seu acesso ao Sonhaí venceu em ${CC.dataBR(u.va
 const emailValido = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(e || '').trim());
 const porEmail = (e) => { e = String(e || '').trim().toLowerCase(); return e ? Object.values(DB.usuarios).find((u) => u && (u.email || '').toLowerCase() === e) : null; };
 function senhaInicial() { const L = 'abcdefghjkmnpqrstuvwxyz'; let x = ''; for (let i = 0; i < 4; i++) x += L[crypto.randomInt(L.length)]; return x + '-' + crypto.randomInt(1000, 9999); }
-function novoConvite(u) { DB.convites = DB.convites || {}; for (const [c, v] of Object.entries(DB.convites)) if (v.k === chaveFone(u.fone)) delete DB.convites[c]; const c = crypto.randomBytes(12).toString('base64url'); DB.convites[c] = { k: chaveFone(u.fone), em: Date.now() }; return c; }
+function novoConvite(u) { DB.convites = DB.convites || {}; for (const [c, v] of Object.entries(DB.convites)) if (v.k === chaveFone(u.fone)) delete DB.convites[c]; const c = crypto.randomBytes(16).toString('base64url'); DB.convites[H(c)] = { k: chaveFone(u.fone), em: Date.now() }; return c; }
 function textoAcesso(u, senha, convite) {
   return `Olá, ${u.estado.perfil.nome || ''}! 💙\nSeu acesso ao *Sonhaí* está pronto.\n\n📲 Abra e instale o app por este link:\n${CFG.url}/?acesso=${convite}\n\n👤 Login: ${fmtFone(u.fone)}${u.email ? ' ou ' + u.email : ''}\n🔑 Senha inicial: ${senha}\n📅 Plano: ${(PLANOS[u.plano] || PLANOS.ilimitado).nome}${u.validade ? ' (até ' + CC.dataBR(u.validade) + ')' : ''}\n\nNo primeiro acesso você cria a sua senha pessoal.`;
 }
+function H(x) { return crypto.createHash('sha256').update(String(x)).digest('hex'); }
+const pega = (obj, k) => obj && Object.prototype.hasOwnProperty.call(obj, k) ? obj[k] : null;
+function auditar(req, quem, acao, alvo) {
+  DB.auditoria = DB.auditoria || [];
+  DB.auditoria.push({ em: new Date().toISOString(), quem: quem ? (quem.estado.perfil.nome || quem.fone) : '?', acao, alvo: alvo || '', ip: ipDe(req) });
+  if (DB.auditoria.length > 500) DB.auditoria = DB.auditoria.slice(-500);
+  salvarDB();
+}
+// IP real: o último endereço do X-Forwarded-For é o que o Render adiciona (os anteriores podem ser falsos)
+function ipDe(req) { const x = String(req.headers['x-forwarded-for'] || '').split(',').map((v) => v.trim()).filter(Boolean); return x.length ? x[x.length - 1] : (req.socket.remoteAddress || ''); }
 function novaSessao(u) {
   const t = crypto.randomBytes(24).toString('base64url');
-  DB.tokens[t] = { k: chaveFone(u.fone), em: Date.now() };
+  DB.tokens[H(t)] = { k: chaveFone(u.fone), em: Date.now() };
   salvarDB();
   return t;
 }
@@ -184,9 +199,9 @@ function usuario(fone, criar) {
   return u;
 }
 function porToken(t) {
-  const s = t && DB.tokens[t];
+  const s = t && pega(DB.tokens, H(t));
   if (!s) return null;
-  if (Date.now() - s.em > SESSAO_DIAS * 864e5) { delete DB.tokens[t]; salvarDB(); return null; }
+  if (Date.now() - s.em > SESSAO_DIAS * 864e5) { delete DB.tokens[H(t)]; salvarDB(); return null; }
   return DB.usuarios[s.k] || null;
 }
 
@@ -202,7 +217,7 @@ function confereSenha(senha, guardado) {
   const novo = hashSenha(senha, sal).split(':')[1];
   return crypto.timingSafeEqual(Buffer.from(h, 'hex'), Buffer.from(novo, 'hex'));
 }
-const senhaFraca = (s) => !s || String(s).length < 6 ? 'A senha precisa ter pelo menos 6 caracteres.' : /^(\d)\1+$|^123456|^654321|^senha|^abcdef/i.test(s) ? 'Essa senha é fácil de adivinhar. Tente outra.' : '';
+const senhaFraca = (s) => { s = String(s || ''); if (s.length < 8) return 'A senha precisa ter pelo menos 8 caracteres, com letras e números.'; if (s.length > 128) return 'Senha longa demais.'; if (!/[a-zA-ZÀ-ú]/.test(s) || !/\d/.test(s)) return 'Use letras e números na senha.'; if (/^(.)\1+$|12345678|87654321|senha|password|sonhai|qwerty|abcd1234/i.test(s)) return 'Essa senha é fácil de adivinhar. Tente outra.'; return ''; };
 // limite de tentativas: 5 erros em 15 min por número e 30 por IP
 const tentativas = new Map();
 function bloqueado(chave, max) { const x = tentativas.get(chave); return x && x.n >= max && Date.now() - x.em < 15 * 60e3; }
@@ -229,7 +244,7 @@ async function enviar(u, texto, opts = {}) {
   salvarDB();
   const canal = opts.canal || (u.telegram && (DEMO || u.verificado === false || u.canal === 'telegram') ? 'telegram' : 'whatsapp');
   if (canal === 'telegram') { if (u.telegram) return tgEnviar(u.telegram, texto); return; }
-  if (DEMO) { log('[DEMO → ' + u.fone + ']\n' + texto); return; }
+  if (DEMO) { if (LOG_MENSAGENS) log('[DEMO → ' + u.fone + ']\n' + texto); return; }
   const dentroJanela = Date.now() - (u.ultimaMsg || 0) < 23.5 * 3600 * 1000;
   try {
     if (dentroJanela || !CFG.template || opts.forcarTexto) {
@@ -291,11 +306,11 @@ async function tgReceber(msg) {
   DB.tg = DB.tg || {}; DB.tgcodigos = DB.tgcodigos || {};
   const m = texto.match(/^\/start\s+(\S+)/);
   if (m) {
-    const c = DB.tgcodigos[m[1]];
+    const c = pega(DB.tgcodigos, H(m[1]));
     if (!c || Date.now() - c.em > 30 * 60e3) return tgEnviar(chatId, '⏰ Esse link expirou. No app, abra *Mais → Mensagens* e toque em *Conectar Telegram* de novo.');
     const u = DB.usuarios[c.k]; if (!u) return;
     if (u.telegram && u.telegram !== chatId) delete DB.tg[u.telegram];
-    u.telegram = chatId; DB.tg[chatId] = c.k; delete DB.tgcodigos[m[1]]; u.rev++; salvarDB();
+    u.telegram = chatId; DB.tg[chatId] = c.k; delete DB.tgcodigos[H(m[1])]; u.rev++; salvarDB();
     return tgEnviar(chatId, `✅ Pronto, ${u.estado.perfil.nome || ''}! Seu Telegram está ligado ao Sonhaí. 💙\n\n` + CC.textoAjuda(u.estado).split('\n').slice(2).join('\n'));
   }
   const k = DB.tg[chatId]; const u = k && DB.usuarios[k];
@@ -303,6 +318,8 @@ async function tgReceber(msg) {
   const t = texto.replace(/^\/(resumo|contas|agenda|ajuda)\b.*/, (x, c) => ({ resumo: 'resumo', contas: 'contas a pagar', agenda: 'agenda', ajuda: 'ajuda' })[c]);
   if (msg.voice || msg.audio) {
     try {
+      if (((msg.voice || msg.audio).file_size || 0) > 10 * 1024 * 1024) return tgEnviar(chatId, '🙈 Áudio muito grande. Mande um áudio mais curto, por favor.');
+      if (bloqueado('aud:' + chaveFone(u.fone), 60)) return tgEnviar(chatId, 'Muitos áudios em pouco tempo. Espere alguns minutos. 🙂'); errou('aud:' + chaveFone(u.fone));
       const f = await tgApi('getFile', { file_id: (msg.voice || msg.audio).file_id });
       const r = await fetch(`${TG_API}/file/bot${CFG.tgToken}/${f.file_path}`);
       const txt = await transcrever(Buffer.from(await r.arrayBuffer()), (msg.voice || msg.audio).mime_type || 'audio/ogg');
@@ -337,6 +354,7 @@ async function receber(fone, texto, origemAudio) {
 }
 /** Entende o pedido (texto já transcrito) e responde pelo mesmo canal. */
 async function processar(u, texto, origemAudio, canal) {
+  texto = String(texto || '').slice(0, 500);
   const env = (msg, o) => enviar(u, msg, Object.assign({ canal }, o || {}));
   if (u.bloqueado) return env('Seu acesso está suspenso. Fale com o suporte do Sonhaí.');
   if (expirado(u)) return env(msgExpirado(u));
@@ -345,7 +363,7 @@ async function processar(u, texto, origemAudio, canal) {
   const t = CC.sem(texto).trim();
   if (/^(esqueci (a |minha )?senha|recuperar senha|trocar senha|nova senha)$/.test(t)) {
     const cod = crypto.randomBytes(16).toString('base64url');
-    DB.resets[cod] = { k: chaveFone(u.fone), em: Date.now() }; salvarDB();
+    DB.resets[H(cod)] = { k: chaveFone(u.fone), em: Date.now() }; salvarDB();
     return env(`🔐 Para criar uma senha nova, toque no link (vale por 30 minutos):\n${CFG.url}/?r=${cod}\n\nSe não foi você que pediu, é só ignorar.`, { forcarTexto: true });
   }
   let m = t.match(/^(meu nome e|me chame de|pode me chamar de|sou o|sou a)\s+(.+)/);
@@ -433,6 +451,8 @@ async function ciclo() {
   const hojeIso = CC.iso(agora);
   const hm = CC.pad(agora.getHours()) + ':' + CC.pad(agora.getMinutes());
   if (hm >= '03:00') backupDiario(hojeIso);
+  for (const [kk, v] of tentativas) if (Date.now() - v.em > 15 * 60e3) tentativas.delete(kk);
+  for (const nome of ['resets', 'tgcodigos']) for (const [kk, v] of Object.entries(DB[nome] || {})) if (Date.now() - v.em > 864e5) delete DB[nome][kk];
   for (const u of Object.values(DB.usuarios)) {
     if (!u || (u.verificado === false && !u.telegram) || u.bloqueado || expirado(u)) continue;
     const e = u.estado; u.enviados = u.enviados || {};
@@ -459,7 +479,10 @@ function lerCorpo(req, limite = 20 * 1024 * 1024) {
   return new Promise((ok, erro) => { const partes = []; let n = 0; req.on('data', (c) => { n += c.length; if (n > limite) { erro(new Error('grande demais')); req.destroy(); } else partes.push(c); }); req.on('end', () => ok(Buffer.concat(partes))); req.on('error', erro); });
 }
 // rotas de teste: só no seu computador, ou com a ADMIN_KEY
-const testeLiberado = (req) => CFG.admin ? req.headers['x-admin-key'] === CFG.admin : /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(req.headers.host || '');
+function testeLiberado(req) {
+  if (CFG.admin) { const a = Buffer.from(String(req.headers['x-admin-key'] || '')); const b = Buffer.from(CFG.admin); return a.length === b.length && crypto.timingSafeEqual(a, b); }
+  return !PRODUCAO && /^(127\.0\.0\.1|::1|::ffff:127\.0\.0\.1)$/.test(req.socket.remoteAddress || '') && !req.headers['x-forwarded-for'];
+}
 function autenticar(req) {
   const u = porToken((req.headers.authorization || '').replace(/^Bearer\s+/i, ''));
   if (!u || u.bloqueado || expirado(u)) return null;
@@ -467,7 +490,15 @@ function autenticar(req) {
   return u;
 }
 
+const CSP = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'";
 const servidor = http.createServer(async (req, res) => {
+  res.setHeader('Content-Security-Policy', CSP);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  res.setHeader('Permissions-Policy', 'camera=(), geolocation=(), microphone=(self)');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
   const url = new URL(req.url, 'http://x');
   const rota = url.pathname;
   try {
@@ -478,8 +509,10 @@ const servidor = http.createServer(async (req, res) => {
     }
     // --- mensagens recebidas
     if (rota === '/webhook' && req.method === 'POST') {
-      const bruto = await lerCorpo(req);
-      if (CFG.waSecret) {
+      // só aceita mensagens do WhatsApp quando ele está configurado E com a assinatura da Meta
+      if (DEMO || !CFG.waSecret) { res.writeHead(403); return res.end(); }
+      const bruto = await lerCorpo(req, 2 * 1024 * 1024);
+      {
         const assinatura = req.headers['x-hub-signature-256'] || '';
         const esperado = 'sha256=' + crypto.createHmac('sha256', CFG.waSecret).update(bruto).digest('hex');
         if (assinatura.length !== esperado.length || !crypto.timingSafeEqual(Buffer.from(assinatura), Buffer.from(esperado))) { res.writeHead(401); return res.end(); }
@@ -511,7 +544,7 @@ const servidor = http.createServer(async (req, res) => {
     }
     if (rota === '/api/config') return json(res, 200, { whatsapp: DEMO ? '' : process.env.WHATSAPP_NUMERO_EXIBICAO || '', demo: DEMO, telegram: TG_BOT, cadastroAberto: !(DB.config && DB.config.cadastroAberto === false), suporte: suporte() });
     if (rota === '/api/acesso') {
-      const c = DB.convites && DB.convites[url.searchParams.get('c') || ''];
+      const c = pega(DB.convites, H(url.searchParams.get('c') || ''));
       const u = c && DB.usuarios[c.k];
       if (!u || Date.now() - c.em > 60 * 864e5) return json(res, 404, { erro: 'Link de acesso inválido ou vencido. Peça um novo ao suporte.' });
       return json(res, 200, { nome: u.estado.perfil.nome, fone: u.fone, plano: (PLANOS[u.plano] || PLANOS.ilimitado).nome, validade: u.validade || null });
@@ -528,7 +561,7 @@ const servidor = http.createServer(async (req, res) => {
       if (!TG_BOT) return json(res, 400, { erro: 'O Telegram ainda não foi ligado no servidor.' });
       DB.tgcodigos = DB.tgcodigos || {};
       const cod = crypto.randomBytes(12).toString('base64url');
-      DB.tgcodigos[cod] = { k: chaveFone(u.fone), em: Date.now() }; salvarDB();
+      DB.tgcodigos[H(cod)] = { k: chaveFone(u.fone), em: Date.now() }; salvarDB();
       return json(res, 200, { link: `https://t.me/${TG_BOT}?start=${cod}`, bot: TG_BOT });
     }
     if (rota.startsWith('/api/admin/')) {
@@ -547,7 +580,7 @@ const servidor = http.createServer(async (req, res) => {
           lancamentos: lista.reduce((x, u) => x + u.lancamentos, 0), bytes: Buffer.byteLength(JSON.stringify(DB.usuarios)) };
         totais.expirados = lista.filter((u) => u.expirado).length;
         totais.vencendo = lista.filter((u) => u.dias != null && u.dias >= 0 && u.dias <= 7).length;
-        return json(res, 200, { usuarios: lista, totais, planos: PLANOS, config: { cadastroAberto: !(DB.config && DB.config.cadastroAberto === false) } });
+        return json(res, 200, { auditoria: (DB.auditoria || []).slice(-60).reverse(), usuarios: lista, totais, planos: PLANOS, config: { cadastroAberto: !(DB.config && DB.config.cadastroAberto === false) } });
       }
       let b = {}; if (req.method === 'POST') { try { b = JSON.parse((await lerCorpo(req, 64 * 1024)).toString() || '{}'); } catch (e) { /* vazio */ } }
       if (rota === '/api/admin/criar' && req.method === 'POST') {
@@ -562,7 +595,7 @@ const servidor = http.createServer(async (req, res) => {
         const senha = senhaInicial();
         Object.assign(u, { senha: hashSenha(senha), trocarSenha: true, email, plano: b.plano, validade: calcValidade(b.plano), criadoPor: 'admin', verificado: true });
         u.estado.perfil.nome = nome; u.estado.perfilUpd = Date.now();
-        const c = novoConvite(u); salvarDB();
+        const c = novoConvite(u); auditar(req, a, 'criou acesso (' + b.plano + ')', nome + ' ' + fmtFone(fone));
         return json(res, 200, { senha, link: `${CFG.url}/?acesso=${c}`, mensagem: textoAcesso(u, senha, c), fone: u.fone });
       }
       const alvo = b.k ? DB.usuarios[b.k] : null;
@@ -570,39 +603,46 @@ const servidor = http.createServer(async (req, res) => {
       if (rota === '/api/admin/renovar') {
         if (b.validade) { if (!/^\d{4}-\d{2}-\d{2}$/.test(b.validade)) return json(res, 400, { erro: 'Data inválida.' }); alvo.validade = b.validade; alvo.plano = alvo.plano || '1m'; }
         else { if (!PLANOS[b.plano]) return json(res, 400, { erro: 'Plano inválido.' }); alvo.validade = calcValidade(b.plano, alvo.validade); alvo.plano = b.plano; }
-        salvarDB(); return json(res, 200, { ok: true, validade: alvo.validade });
+        auditar(req, a, 'renovou para ' + (alvo.validade ? CC.dataBR(alvo.validade) : 'ilimitado'), alvo.estado.perfil.nome + ' ' + fmtFone(alvo.fone));
+        return json(res, 200, { ok: true, validade: alvo.validade });
       }
       if (rota === '/api/admin/editar') {
         const email = String(b.email || '').trim().toLowerCase();
         if (email && !emailValido(email)) return json(res, 400, { erro: 'E-mail inválido.' });
         const outro = email && porEmail(email); if (outro && outro !== alvo) return json(res, 409, { erro: 'Esse e-mail já está em outra conta.' });
         if (b.nome) { alvo.estado.perfil.nome = String(b.nome).trim().slice(0, 60); alvo.estado.perfilUpd = Date.now(); alvo.rev++; }
-        alvo.email = email; salvarDB(); return json(res, 200, { ok: true });
+        alvo.email = email; auditar(req, a, 'editou nome/e-mail', alvo.estado.perfil.nome + ' ' + fmtFone(alvo.fone)); return json(res, 200, { ok: true });
       }
       if (rota === '/api/admin/senha') {
         const senha = senhaInicial(); alvo.senha = hashSenha(senha); alvo.trocarSenha = true;
         for (const [tk, v] of Object.entries(DB.tokens)) if (v.k === b.k) delete DB.tokens[tk];
-        const c = novoConvite(alvo); salvarDB();
+        const c = novoConvite(alvo); auditar(req, a, 'gerou nova senha inicial', alvo.estado.perfil.nome + ' ' + fmtFone(alvo.fone));
         return json(res, 200, { senha, link: `${CFG.url}/?acesso=${c}`, mensagem: textoAcesso(alvo, senha, c), fone: alvo.fone });
       }
       if (rota === '/api/admin/excluir') {
         for (const [tk, v] of Object.entries(DB.tokens)) if (v.k === b.k) delete DB.tokens[tk];
         if (alvo.telegram && DB.tg) delete DB.tg[alvo.telegram];
-        delete DB.usuarios[b.k]; salvarDB(); return json(res, 200, { ok: true });
+        auditar(req, a, 'EXCLUIU usuário', alvo.estado.perfil.nome + ' ' + fmtFone(alvo.fone)); delete DB.usuarios[b.k]; salvarDB(); return json(res, 200, { ok: true });
       }
       if (rota === '/api/admin/config') {
         DB.config = DB.config || {};
         if (typeof b.cadastroAberto === 'boolean') DB.config.cadastroAberto = b.cadastroAberto;
-        salvarDB(); return json(res, 200, { ok: true });
+        auditar(req, a, b.cadastroAberto ? 'abriu o cadastro' : 'fechou o cadastro'); return json(res, 200, { ok: true });
       }
       if (rota === '/api/admin/bloquear' && req.method === 'POST') {
         const u = DB.usuarios[b.k];
         if (!u || ehAdmin(u)) return json(res, 400, { erro: 'Usuário não encontrado.' });
-        u.bloqueado = !!b.bloquear;
+        u.bloqueado = !!b.bloquear; auditar(req, a, u.bloqueado ? 'bloqueou' : 'liberou', u.estado.perfil.nome + ' ' + fmtFone(u.fone));
         if (u.bloqueado) for (const [tk, v] of Object.entries(DB.tokens)) if (v.k === b.k) delete DB.tokens[tk];
         salvarDB(); return json(res, 200, { ok: true });
       }
-      if (rota === '/api/admin/backup') return json(res, 200, { geradoEm: new Date().toISOString(), versao: 1, usuarios: DB.usuarios });
+      if (rota === '/api/admin/backup') {
+        if (req.method !== 'POST') return json(res, 405, { erro: 'Confirme sua senha para baixar o backup.' });
+        if (bloqueado('adm:' + chaveFone(a.fone), 5)) return json(res, 429, { erro: 'Muitas tentativas. Espere 15 minutos.' });
+        if (!confereSenha(b.senha || '', a.senha)) { errou('adm:' + chaveFone(a.fone)); auditar(req, a, 'backup geral NEGADO (senha errada)'); return json(res, 403, { erro: 'Senha incorreta.' }); }
+        auditar(req, a, 'baixou o backup geral');
+        return json(res, 200, { geradoEm: new Date().toISOString(), versao: 1, usuarios: DB.usuarios });
+      }
       return json(res, 404, { erro: 'Rota não encontrada.' });
     }
     if (rota === '/api/telegram/desligar' && req.method === 'POST') {
@@ -610,7 +650,7 @@ const servidor = http.createServer(async (req, res) => {
       if (u.telegram && DB.tg) delete DB.tg[u.telegram]; delete u.telegram; salvarDB();
       return json(res, 200, { ok: true });
     }
-    const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+    const ip = ipDe(req);
     const corpoJSON = async () => { try { return JSON.parse((await lerCorpo(req, 64 * 1024)).toString() || '{}'); } catch (e) { return {}; } };
     if (rota === '/api/cadastro' && req.method === 'POST') {
       const b = await corpoJSON(); const fone = normFone(b.fone); const nome = String(b.nome || '').trim().slice(0, 60);
@@ -623,6 +663,7 @@ const servidor = http.createServer(async (req, res) => {
       if (porEmail(email)) return json(res, 409, { erro: 'Esse e-mail já tem conta. Toque em "Entrar".' });
       const fr = senhaFraca(b.senha); if (fr) return json(res, 400, { erro: fr });
       const ja = DB.usuarios[chaveFone(fone)];
+      if (ADMINS.has(chaveFone(fone)) && Object.values(DB.usuarios).some((x) => x && ehAdmin(x))) return json(res, 403, { erro: 'Esse número é reservado. Peça o seu acesso ao administrador do Sonhaí.' });
       if (ja && ja.senha) return json(res, 409, { erro: 'Esse número já tem conta. Toque em "Entrar".' });
       if (ja && !ja.senha) return json(res, 409, { erro: 'Esse número já começou pelo WhatsApp. Mande "esqueci minha senha" para o Sonhaí no WhatsApp para criar sua senha.' });
       errou('ip:' + ip);
@@ -630,7 +671,7 @@ const servidor = http.createServer(async (req, res) => {
       u.senha = hashSenha(b.senha); u.estado.perfil.nome = nome; u.estado.perfilUpd = Date.now();
       u.email = email; u.criadoPor = 'cadastro';
       if (!ehAdmin(u)) { u.plano = (DB.config && DB.config.planoCadastro) || 'gratis'; u.validade = calcValidade(u.plano); }
-      if (b.estado && typeof b.estado === 'object' && !b.estado.demo) { u.estado = CC.mesclar(u.estado, b.estado); u.estado.perfil.nome = nome; u.estado.perfil.whatsapp = fone; }
+      if (b.estado && typeof b.estado === 'object' && !b.estado.demo) { u.estado = CC.sanearEstado(CC.mesclar(u.estado, b.estado)); u.estado.perfil.nome = nome; u.estado.perfil.whatsapp = fone; }
       if (!DEMO) { u.verificado = false; u.codigo = codigoVerif(); }
       salvarDB();
       return json(res, 200, { token: novaSessao(u), verificado: u.verificado !== false, codigo: u.codigo || '' });
@@ -649,11 +690,11 @@ const servidor = http.createServer(async (req, res) => {
       return json(res, 200, { token: novaSessao(u) });
     }
     if (rota === '/api/redefinir' && req.method === 'POST') {
-      const b = await corpoJSON(); const r = DB.resets[b.codigo];
+      const b = await corpoJSON(); const r = pega(DB.resets, H(String(b.codigo || '')));
       if (!r || Date.now() - r.em > 30 * 60e3) return json(res, 400, { erro: 'Esse link expirou. Mande "esqueci minha senha" no WhatsApp de novo.' });
       const fr = senhaFraca(b.senha); if (fr) return json(res, 400, { erro: fr });
       const u = DB.usuarios[r.k]; if (!u) return json(res, 400, { erro: 'Conta não encontrada.' });
-      u.senha = hashSenha(b.senha); delete DB.resets[b.codigo];
+      u.senha = hashSenha(b.senha); delete DB.resets[H(String(b.codigo || ''))];
       for (const [tk, v] of Object.entries(DB.tokens)) if (v.k === r.k) delete DB.tokens[tk]; // derruba sessões antigas
       salvarDB();
       return json(res, 200, { token: novaSessao(u) });
@@ -667,14 +708,17 @@ const servidor = http.createServer(async (req, res) => {
       const b = await corpoJSON();
       if (u.senha && !confereSenha(b.atual || '', u.senha)) return json(res, 400, { erro: 'A senha atual não confere.' });
       const fr = senhaFraca(b.nova); if (fr) return json(res, 400, { erro: fr });
-      u.senha = hashSenha(b.nova); u.trocarSenha = false; salvarDB();
+      u.senha = hashSenha(b.nova); u.trocarSenha = false;
+      const atualTk = H((req.headers.authorization || '').replace(/^Bearer\s+/i, ''));
+      for (const [tk, v] of Object.entries(DB.tokens)) if (v.k === chaveFone(u.fone) && tk !== atualTk) delete DB.tokens[tk];
+      salvarDB();
       return json(res, 200, { ok: true });
     }
     if (rota === '/api/sair' && req.method === 'POST') {
       const t = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
       const b = await corpoJSON();
       const u = porToken(t);
-      if (u && b.todos) { for (const [tk, v] of Object.entries(DB.tokens)) if (v.k === chaveFone(u.fone)) delete DB.tokens[tk]; } else delete DB.tokens[t];
+      if (u && b.todos) { for (const [tk, v] of Object.entries(DB.tokens)) if (v.k === chaveFone(u.fone)) delete DB.tokens[tk]; } else delete DB.tokens[H(t)];
       salvarDB(); return json(res, 200, { ok: true });
     }
     if (rota === '/api/estado') {
@@ -683,12 +727,13 @@ const servidor = http.createServer(async (req, res) => {
       if (req.method === 'PUT') {
         const { estado } = JSON.parse((await lerCorpo(req, 5 * 1024 * 1024)).toString());
         const chat = u.estado.chat;
-        u.estado = CC.mesclar(estado, u.estado); u.estado.chat = chat; delete u.estado.demo; u.rev++; salvarDB();
+        u.estado = CC.sanearEstado(CC.mesclar(estado, u.estado)); u.estado.chat = chat; delete u.estado.demo; u.rev++; salvarDB();
         return json(res, 200, { estado: u.estado, rev: u.rev });
       }
     }
     if (rota === '/api/transcrever' && req.method === 'POST') {
       const u = autenticar(req); if (!u) return json(res, 401, { erro: 'não autorizado' });
+      if (bloqueado('aud:' + chaveFone(u.fone), 60)) return json(res, 429, { erro: 'Muitos áudios em pouco tempo. Espere alguns minutos.' }); errou('aud:' + chaveFone(u.fone));
       const buf = await lerCorpo(req);
       try { return json(res, 200, { texto: await transcrever(buf, req.headers['content-type'] || 'audio/webm') }); }
       catch (e) { return json(res, 500, { erro: e.message }); }
@@ -701,6 +746,7 @@ const servidor = http.createServer(async (req, res) => {
     }
     if (rota === '/api/ciclo' && req.method === 'POST' && testeLiberado(req)) { await ciclo(); return json(res, 200, { ok: true }); }
 
+    if (rota.startsWith('/api/') || rota === '/webhook' || rota === '/telegram') return json(res, 404, { erro: 'Rota não encontrada.' });
     // --- arquivos do app
     const nomeArq = rota === '/' ? 'index.html' : decodeURIComponent(rota).replace(/^\/+/, '');
     let arq = PUBLICOS.has(nomeArq) ? path.join(PUB, nomeArq) : path.join(PUB, 'index.html');
@@ -715,6 +761,8 @@ const servidor = http.createServer(async (req, res) => {
     if (!res.headersSent) json(res, 500, { erro: 'Erro interno' });
   }
 });
+servidor.headersTimeout = 15000;
+servidor.requestTimeout = 60000;
 (async () => {
   try { await carregarDB(); } catch (e) { log('❌ Não consegui abrir o banco de dados:', e.message); process.exit(1); }
   prepararDB();
