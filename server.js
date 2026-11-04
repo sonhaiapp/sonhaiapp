@@ -14,7 +14,11 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const CC = require('./public/core.js');
+// Funciona com os arquivos na pasta public/ ou todos soltos na mesma pasta (upload pelo GitHub)
+const PUB = fs.existsSync(path.join(__dirname, 'public', 'index.html')) ? path.join(__dirname, 'public') : __dirname;
+const CC = require(path.join(PUB, 'core.js'));
+// só estes arquivos podem ser abertos pelo navegador
+const PUBLICOS = new Set(['index.html', 'core.js', 'sw.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png', 'privacidade.html', 'termos.html']);
 
 // ------------------------------------------------------------------ config
 (function carregarEnv() {
@@ -460,9 +464,9 @@ const servidor = http.createServer(async (req, res) => {
     if (rota === '/api/ciclo' && req.method === 'POST' && testeLiberado(req)) { await ciclo(); return json(res, 200, { ok: true }); }
 
     // --- arquivos do app
-    let arq = path.normalize(path.join(__dirname, 'public', rota === '/' ? 'index.html' : decodeURIComponent(rota)));
-    if (!arq.startsWith(path.join(__dirname, 'public'))) { res.writeHead(403); return res.end(); }
-    if (!fs.existsSync(arq) || fs.statSync(arq).isDirectory()) arq = path.join(__dirname, 'public', 'index.html');
+    const nomeArq = rota === '/' ? 'index.html' : decodeURIComponent(rota).replace(/^\/+/, '');
+    let arq = PUBLICOS.has(nomeArq) ? path.join(PUB, nomeArq) : path.join(PUB, 'index.html');
+    if (!fs.existsSync(arq)) arq = path.join(PUB, 'index.html');
     let conteudo = fs.readFileSync(arq);
     const ext = path.extname(arq);
     if (arq.endsWith('index.html')) conteudo = Buffer.from(conteudo.toString().replace('<!--CC_SERVER-->', '<script>window.CC_SERVER=true</script>'));
