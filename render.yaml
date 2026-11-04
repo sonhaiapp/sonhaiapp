@@ -1,0 +1,23 @@
+# Publicação no Render (plano grátis). Veja o GUIA, "Hospedagem grátis passo a passo".
+services:
+  - type: web
+    name: sonhai
+    runtime: node
+    plan: free
+    region: virginia
+    buildCommand: echo "sem build"
+    startCommand: node server.js
+    healthCheckPath: /api/saude
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: APP_TZ
+        value: America/Sao_Paulo
+      - key: ADMIN_KEY
+        generateValue: true
+      - key: WHATSAPP_VERIFY_TOKEN
+        generateValue: true
+      - key: WHATSAPP_TEMPLATE
+        value: lembrete_sonhai
