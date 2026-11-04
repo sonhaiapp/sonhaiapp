@@ -78,7 +78,7 @@ async function carregarDB() {
   for (;;) {
     const linhas = await sb('GET', `kv?select=chave,valor&chave=not.like.backup*&order=chave&offset=${de}&limit=${passo}`, null, 'count=none');
     for (const l of linhas) {
-      if (l.chave === 'sys') { DB.tokens = l.valor.tokens || {}; DB.resets = l.valor.resets || {}; DB.tg = l.valor.tg || {}; DB.tgcodigos = l.valor.tgcodigos || {}; }
+      if (l.chave === 'sys') { DB.tokens = l.valor.tokens || {}; DB.resets = l.valor.resets || {}; DB.tg = l.valor.tg || {}; DB.tgcodigos = l.valor.tgcodigos || {}; DB.convites = l.valor.convites || {}; DB.config = l.valor.config || {}; }
       else if (l.chave.startsWith('u:')) DB.usuarios[l.chave.slice(2)] = l.valor;
       salvos.set(l.chave, JSON.stringify(l.valor));
     }
@@ -101,7 +101,7 @@ async function gravar() {
   gravando = true;
   try {
     const atual = new Map();
-    atual.set('sys', JSON.stringify({ tokens: DB.tokens, resets: DB.resets, tg: DB.tg || {}, tgcodigos: DB.tgcodigos || {} }));
+    atual.set('sys', JSON.stringify({ tokens: DB.tokens, resets: DB.resets, tg: DB.tg || {}, tgcodigos: DB.tgcodigos || {}, convites: DB.convites || {}, config: DB.config || {} }));
     for (const [k, u] of Object.entries(DB.usuarios)) if (u) atual.set('u:' + k, JSON.stringify(u));
     const mudou = [];
     for (const [k, txt] of atual) if (salvos.get(k) !== txt) mudou.push({ chave: k, valor: JSON.parse(txt), atualizado: new Date().toISOString() });
@@ -136,6 +136,37 @@ const SESSAO_DIAS = 180;
 // usuário(s) master: números separados por vírgula na variável ADMIN_FONES
 const ADMINS = new Set(String(process.env.ADMIN_FONES || '').split(/[,;\s]+/).filter(Boolean).map((f) => chaveFone(f)));
 const ehAdmin = (u) => !!u && ADMINS.has(chaveFone(u.fone));
+
+// ------------------------------------------------------------------ planos de acesso
+const PLANOS = {
+  gratis: { nome: 'Grátis (7 dias)', dias: 7 },
+  '1m': { nome: '1 mês', meses: 1 },
+  '3m': { nome: '3 meses', meses: 3 },
+  '6m': { nome: '6 meses', meses: 6 },
+  '12m': { nome: '1 ano', meses: 12 },
+  ilimitado: { nome: 'Ilimitado' }
+};
+const hojeSP = () => CC.iso(CC.agora(CFG.tz));
+/** Nova data de validade: soma o plano a partir de hoje (ou do fim do plano atual, se ainda estiver valendo). */
+function calcValidade(plano, atual) {
+  const p = PLANOS[plano]; if (!p || plano === 'ilimitado') return null;
+  const h = hojeSP();
+  const base = atual && atual >= h ? new Date(atual + 'T12:00') : new Date(h + 'T12:00');
+  if (p.dias) base.setDate(base.getDate() + p.dias); else base.setMonth(base.getMonth() + p.meses);
+  return CC.iso(base);
+}
+const expirado = (u) => !!u && !ehAdmin(u) && !!u.validade && hojeSP() > u.validade;
+const diasRestantes = (u) => u && u.validade ? Math.round((new Date(u.validade + 'T12:00') - new Date(hojeSP() + 'T12:00')) / 864e5) : null;
+const suporte = () => { const k = [...ADMINS][0]; return normFone(process.env.SUPORTE_WHATSAPP || '') || (k && DB.usuarios[k] ? DB.usuarios[k].fone : normFone(String(process.env.ADMIN_FONES || '').split(/[,;\s]+/)[0])) || ''; };
+const fmtFone = (f) => { const d = String(f || '').replace(/\D/g, '').replace(/^55/, ''); return d.length >= 10 ? `(${d.slice(0, 2)}) ${d.slice(2, d.length - 4)}-${d.slice(-4)}` : f; };
+const msgExpirado = (u) => `⏳ Seu acesso ao Sonhaí venceu em ${CC.dataBR(u.validade)}. Para renovar, fale com o suporte${suporte() ? ' no WhatsApp ' + fmtFone(suporte()) : ''}. Seus dados continuam guardados. 💙`;
+const emailValido = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(e || '').trim());
+const porEmail = (e) => { e = String(e || '').trim().toLowerCase(); return e ? Object.values(DB.usuarios).find((u) => u && (u.email || '').toLowerCase() === e) : null; };
+function senhaInicial() { const L = 'abcdefghjkmnpqrstuvwxyz'; let x = ''; for (let i = 0; i < 4; i++) x += L[crypto.randomInt(L.length)]; return x + '-' + crypto.randomInt(1000, 9999); }
+function novoConvite(u) { DB.convites = DB.convites || {}; for (const [c, v] of Object.entries(DB.convites)) if (v.k === chaveFone(u.fone)) delete DB.convites[c]; const c = crypto.randomBytes(12).toString('base64url'); DB.convites[c] = { k: chaveFone(u.fone), em: Date.now() }; return c; }
+function textoAcesso(u, senha, convite) {
+  return `Olá, ${u.estado.perfil.nome || ''}! 💙\nSeu acesso ao *Sonhaí* está pronto.\n\n📲 Abra e instale o app por este link:\n${CFG.url}/?acesso=${convite}\n\n👤 Login: ${fmtFone(u.fone)}${u.email ? ' ou ' + u.email : ''}\n🔑 Senha inicial: ${senha}\n📅 Plano: ${(PLANOS[u.plano] || PLANOS.ilimitado).nome}${u.validade ? ' (até ' + CC.dataBR(u.validade) + ')' : ''}\n\nNo primeiro acesso você cria a sua senha pessoal.`;
+}
 function novaSessao(u) {
   const t = crypto.randomBytes(24).toString('base64url');
   DB.tokens[t] = { k: chaveFone(u.fone), em: Date.now() };
@@ -307,6 +338,8 @@ async function receber(fone, texto, origemAudio) {
 /** Entende o pedido (texto já transcrito) e responde pelo mesmo canal. */
 async function processar(u, texto, origemAudio, canal) {
   const env = (msg, o) => enviar(u, msg, Object.assign({ canal }, o || {}));
+  if (u.bloqueado) return env('Seu acesso está suspenso. Fale com o suporte do Sonhaí.');
+  if (expirado(u)) return env(msgExpirado(u));
   u.estado.chat.push({ de: 'me', txt: (origemAudio ? '🎤 ' : '') + texto, em: Date.now() });
   const hoje = CC.agora(CFG.tz);
   const t = CC.sem(texto).trim();
@@ -401,7 +434,7 @@ async function ciclo() {
   const hm = CC.pad(agora.getHours()) + ':' + CC.pad(agora.getMinutes());
   if (hm >= '03:00') backupDiario(hojeIso);
   for (const u of Object.values(DB.usuarios)) {
-    if (!u || (u.verificado === false && !u.telegram)) continue;
+    if (!u || (u.verificado === false && !u.telegram) || u.bloqueado || expirado(u)) continue;
     const e = u.estado; u.enviados = u.enviados || {};
     const marca = async (chave, fn) => { if (u.enviados[chave]) return; u.enviados[chave] = Date.now(); salvarDB(); const t = fn(); if (t) await enviar(u, t); };
     try {
@@ -429,7 +462,7 @@ function lerCorpo(req, limite = 20 * 1024 * 1024) {
 const testeLiberado = (req) => CFG.admin ? req.headers['x-admin-key'] === CFG.admin : /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(req.headers.host || '');
 function autenticar(req) {
   const u = porToken((req.headers.authorization || '').replace(/^Bearer\s+/i, ''));
-  if (!u || u.bloqueado) return null;
+  if (!u || u.bloqueado || expirado(u)) return null;
   if (Date.now() - (u.ultimo || 0) > 3600e3) { u.ultimo = Date.now(); salvarDB(); }
   return u;
 }
@@ -476,7 +509,13 @@ const servidor = http.createServer(async (req, res) => {
       if (USA_SB && Date.now() - (global.ultimoToqueSB || 0) > 6 * 3600e3) { global.ultimoToqueSB = Date.now(); sb('GET', 'kv?select=chave&limit=1').catch((e) => log('saúde', e.message)); }
       return json(res, 200, { ok: true, whatsapp: !DEMO, banco: USA_SB ? 'supabase' : 'arquivo', usuarios: Object.keys(DB.usuarios).length });
     }
-    if (rota === '/api/config') return json(res, 200, { whatsapp: DEMO ? '' : process.env.WHATSAPP_NUMERO_EXIBICAO || '', demo: DEMO, telegram: TG_BOT });
+    if (rota === '/api/config') return json(res, 200, { whatsapp: DEMO ? '' : process.env.WHATSAPP_NUMERO_EXIBICAO || '', demo: DEMO, telegram: TG_BOT, cadastroAberto: !(DB.config && DB.config.cadastroAberto === false), suporte: suporte() });
+    if (rota === '/api/acesso') {
+      const c = DB.convites && DB.convites[url.searchParams.get('c') || ''];
+      const u = c && DB.usuarios[c.k];
+      if (!u || Date.now() - c.em > 60 * 864e5) return json(res, 404, { erro: 'Link de acesso inválido ou vencido. Peça um novo ao suporte.' });
+      return json(res, 200, { nome: u.estado.perfil.nome, fone: u.fone, plano: (PLANOS[u.plano] || PLANOS.ilimitado).nome, validade: u.validade || null });
+    }
     if (rota === '/telegram' && req.method === 'POST') {
       if (!CFG.tgToken || req.headers['x-telegram-bot-api-secret-token'] !== TG_SEGREDO) { res.writeHead(401); return res.end(); }
       const corpo = JSON.parse((await lerCorpo(req, 1024 * 1024)).toString() || '{}');
@@ -497,7 +536,7 @@ const servidor = http.createServer(async (req, res) => {
       if (rota === '/api/admin/usuarios') {
         const agora = Date.now(); const dia = 864e5;
         const lista = Object.entries(DB.usuarios).filter(([, u]) => u).map(([k, u]) => ({
-          k, nome: u.estado.perfil.nome || '', fone: u.fone, criado: new Date(u.criadoEm || agora).toISOString().slice(0, 10),
+          k, nome: u.estado.perfil.nome || '', fone: u.fone, email: u.email || '', plano: ehAdmin(u) ? 'ilimitado' : (u.plano || 'ilimitado'), validade: ehAdmin(u) ? null : (u.validade || null), dias: ehAdmin(u) ? null : diasRestantes(u), expirado: expirado(u), criadoPor: u.criadoPor || '', trocarSenha: !!u.trocarSenha, criado: new Date(u.criadoEm || agora).toISOString().slice(0, 10),
           ultimo: u.ultimo ? new Date(u.ultimo).toISOString().slice(0, 10) : (u.ultimaMsg ? new Date(u.ultimaMsg).toISOString().slice(0, 10) : ''),
           ultimoMs: Math.max(u.ultimo || 0, u.ultimaMsg || 0), lancamentos: (u.estado.lancamentos || []).length,
           telegram: !!u.telegram, whatsapp: !DEMO && u.verificado !== false && !!u.ultimaMsg, temSenha: !!u.senha, bloqueado: !!u.bloqueado, admin: ehAdmin(u)
@@ -506,10 +545,57 @@ const servidor = http.createServer(async (req, res) => {
           ativos7: lista.filter((u) => agora - u.ultimoMs < 7 * dia).length, ativos30: lista.filter((u) => agora - u.ultimoMs < 30 * dia).length,
           telegram: lista.filter((u) => u.telegram).length, whatsapp: lista.filter((u) => u.whatsapp).length,
           lancamentos: lista.reduce((x, u) => x + u.lancamentos, 0), bytes: Buffer.byteLength(JSON.stringify(DB.usuarios)) };
-        return json(res, 200, { usuarios: lista, totais });
+        totais.expirados = lista.filter((u) => u.expirado).length;
+        totais.vencendo = lista.filter((u) => u.dias != null && u.dias >= 0 && u.dias <= 7).length;
+        return json(res, 200, { usuarios: lista, totais, planos: PLANOS, config: { cadastroAberto: !(DB.config && DB.config.cadastroAberto === false) } });
+      }
+      let b = {}; if (req.method === 'POST') { try { b = JSON.parse((await lerCorpo(req, 64 * 1024)).toString() || '{}'); } catch (e) { /* vazio */ } }
+      if (rota === '/api/admin/criar' && req.method === 'POST') {
+        const fone = normFone(b.fone); const nome = String(b.nome || '').trim().slice(0, 60); const email = String(b.email || '').trim().toLowerCase();
+        if (fone.length < 12 || fone.length > 13) return json(res, 400, { erro: 'WhatsApp com DDD inválido.' });
+        if (!nome) return json(res, 400, { erro: 'Informe o nome.' });
+        if (email && !emailValido(email)) return json(res, 400, { erro: 'E-mail inválido.' });
+        if (DB.usuarios[chaveFone(fone)]) return json(res, 409, { erro: 'Esse WhatsApp já tem conta. Use "Renovar" ou "Nova senha" na lista.' });
+        if (email && porEmail(email)) return json(res, 409, { erro: 'Esse e-mail já está em outra conta.' });
+        if (!PLANOS[b.plano]) return json(res, 400, { erro: 'Escolha um plano.' });
+        const u = usuario(fone, true);
+        const senha = senhaInicial();
+        Object.assign(u, { senha: hashSenha(senha), trocarSenha: true, email, plano: b.plano, validade: calcValidade(b.plano), criadoPor: 'admin', verificado: true });
+        u.estado.perfil.nome = nome; u.estado.perfilUpd = Date.now();
+        const c = novoConvite(u); salvarDB();
+        return json(res, 200, { senha, link: `${CFG.url}/?acesso=${c}`, mensagem: textoAcesso(u, senha, c), fone: u.fone });
+      }
+      const alvo = b.k ? DB.usuarios[b.k] : null;
+      if (['/api/admin/renovar', '/api/admin/editar', '/api/admin/senha', '/api/admin/excluir'].includes(rota) && (!alvo || (ehAdmin(alvo) && rota !== '/api/admin/editar'))) return json(res, 400, { erro: 'Usuário não encontrado.' });
+      if (rota === '/api/admin/renovar') {
+        if (b.validade) { if (!/^\d{4}-\d{2}-\d{2}$/.test(b.validade)) return json(res, 400, { erro: 'Data inválida.' }); alvo.validade = b.validade; alvo.plano = alvo.plano || '1m'; }
+        else { if (!PLANOS[b.plano]) return json(res, 400, { erro: 'Plano inválido.' }); alvo.validade = calcValidade(b.plano, alvo.validade); alvo.plano = b.plano; }
+        salvarDB(); return json(res, 200, { ok: true, validade: alvo.validade });
+      }
+      if (rota === '/api/admin/editar') {
+        const email = String(b.email || '').trim().toLowerCase();
+        if (email && !emailValido(email)) return json(res, 400, { erro: 'E-mail inválido.' });
+        const outro = email && porEmail(email); if (outro && outro !== alvo) return json(res, 409, { erro: 'Esse e-mail já está em outra conta.' });
+        if (b.nome) { alvo.estado.perfil.nome = String(b.nome).trim().slice(0, 60); alvo.estado.perfilUpd = Date.now(); alvo.rev++; }
+        alvo.email = email; salvarDB(); return json(res, 200, { ok: true });
+      }
+      if (rota === '/api/admin/senha') {
+        const senha = senhaInicial(); alvo.senha = hashSenha(senha); alvo.trocarSenha = true;
+        for (const [tk, v] of Object.entries(DB.tokens)) if (v.k === b.k) delete DB.tokens[tk];
+        const c = novoConvite(alvo); salvarDB();
+        return json(res, 200, { senha, link: `${CFG.url}/?acesso=${c}`, mensagem: textoAcesso(alvo, senha, c), fone: alvo.fone });
+      }
+      if (rota === '/api/admin/excluir') {
+        for (const [tk, v] of Object.entries(DB.tokens)) if (v.k === b.k) delete DB.tokens[tk];
+        if (alvo.telegram && DB.tg) delete DB.tg[alvo.telegram];
+        delete DB.usuarios[b.k]; salvarDB(); return json(res, 200, { ok: true });
+      }
+      if (rota === '/api/admin/config') {
+        DB.config = DB.config || {};
+        if (typeof b.cadastroAberto === 'boolean') DB.config.cadastroAberto = b.cadastroAberto;
+        salvarDB(); return json(res, 200, { ok: true });
       }
       if (rota === '/api/admin/bloquear' && req.method === 'POST') {
-        let b = {}; try { b = JSON.parse((await lerCorpo(req, 64 * 1024)).toString() || '{}'); } catch (e) { /* vazio */ }
         const u = DB.usuarios[b.k];
         if (!u || ehAdmin(u)) return json(res, 400, { erro: 'Usuário não encontrado.' });
         u.bloqueado = !!b.bloquear;
@@ -531,6 +617,10 @@ const servidor = http.createServer(async (req, res) => {
       if (bloqueado('ip:' + ip, 30)) return json(res, 429, { erro: 'Muitas tentativas. Espere alguns minutos.' });
       if (fone.length < 12 || fone.length > 13) return json(res, 400, { erro: 'Informe o WhatsApp com DDD. Ex.: (16) 99999-8888' });
       if (!nome) return json(res, 400, { erro: 'Como você quer ser chamado(a)?' });
+      if (DB.config && DB.config.cadastroAberto === false) return json(res, 403, { erro: 'O cadastro está fechado. Peça seu link de acesso ao Sonhaí.' });
+      const email = String(b.email || '').trim().toLowerCase();
+      if (!emailValido(email)) return json(res, 400, { erro: 'Informe um e-mail válido.' });
+      if (porEmail(email)) return json(res, 409, { erro: 'Esse e-mail já tem conta. Toque em "Entrar".' });
       const fr = senhaFraca(b.senha); if (fr) return json(res, 400, { erro: fr });
       const ja = DB.usuarios[chaveFone(fone)];
       if (ja && ja.senha) return json(res, 409, { erro: 'Esse número já tem conta. Toque em "Entrar".' });
@@ -538,18 +628,23 @@ const servidor = http.createServer(async (req, res) => {
       errou('ip:' + ip);
       const u = usuario(fone, true);
       u.senha = hashSenha(b.senha); u.estado.perfil.nome = nome; u.estado.perfilUpd = Date.now();
+      u.email = email; u.criadoPor = 'cadastro';
+      if (!ehAdmin(u)) { u.plano = (DB.config && DB.config.planoCadastro) || 'gratis'; u.validade = calcValidade(u.plano); }
       if (b.estado && typeof b.estado === 'object' && !b.estado.demo) { u.estado = CC.mesclar(u.estado, b.estado); u.estado.perfil.nome = nome; u.estado.perfil.whatsapp = fone; }
       if (!DEMO) { u.verificado = false; u.codigo = codigoVerif(); }
       salvarDB();
       return json(res, 200, { token: novaSessao(u), verificado: u.verificado !== false, codigo: u.codigo || '' });
     }
     if (rota === '/api/login' && req.method === 'POST') {
-      const b = await corpoJSON(); const k = chaveFone(b.fone);
+      const b = await corpoJSON();
+      const pe = String(b.fone || '').includes('@') ? porEmail(b.fone) : null;
+      const k = pe ? chaveFone(pe.fone) : chaveFone(b.fone);
       if (bloqueado('f:' + k, 5) || bloqueado('ip:' + ip, 30)) return json(res, 429, { erro: 'Muitas tentativas erradas. Espere 15 minutos ou mande "esqueci minha senha" no WhatsApp.' });
       const u = DB.usuarios[k];
-      if (!u || !u.senha || !confereSenha(b.senha || '', u.senha)) { errou('f:' + k); errou('ip:' + ip); return json(res, 401, { erro: u && !u.senha ? 'Você ainda não criou senha. Mande "esqueci minha senha" para o Sonhaí no WhatsApp.' : 'Número ou senha incorretos.' }); }
+      if (!u || !u.senha || !confereSenha(b.senha || '', u.senha)) { errou('f:' + k); errou('ip:' + ip); return json(res, 401, { erro: u && !u.senha ? 'Você ainda não criou senha. Mande "esqueci minha senha" para o Sonhaí no WhatsApp.' : 'WhatsApp/e-mail ou senha incorretos.' }); }
       tentativas.delete('f:' + k);
       if (u.bloqueado) return json(res, 403, { erro: 'Seu acesso está suspenso. Fale com o suporte do Sonhaí.' });
+      if (expirado(u)) return json(res, 403, { erro: msgExpirado(u).replace(/\*/g, '') });
       u.ultimo = Date.now();
       return json(res, 200, { token: novaSessao(u) });
     }
@@ -565,14 +660,14 @@ const servidor = http.createServer(async (req, res) => {
     }
     if (rota === '/api/eu') {
       const u = autenticar(req); if (!u) return json(res, 401, { erro: 'Entre novamente.' });
-      return json(res, 200, { admin: ehAdmin(u), telegram: !!u.telegram, fone: u.fone, nome: u.estado.perfil.nome, temSenha: !!u.senha, verificado: u.verificado !== false, codigo: u.verificado === false ? u.codigo : '' });
+      return json(res, 200, { email: u.email || '', plano: ehAdmin(u) ? 'ilimitado' : (u.plano || 'ilimitado'), planoNome: (PLANOS[ehAdmin(u) ? 'ilimitado' : u.plano] || PLANOS.ilimitado).nome, validade: ehAdmin(u) ? null : (u.validade || null), dias: ehAdmin(u) ? null : diasRestantes(u), trocarSenha: !!u.trocarSenha, suporte: suporte(), admin: ehAdmin(u), telegram: !!u.telegram, fone: u.fone, nome: u.estado.perfil.nome, temSenha: !!u.senha, verificado: u.verificado !== false, codigo: u.verificado === false ? u.codigo : '' });
     }
     if (rota === '/api/senha' && req.method === 'POST') {
       const u = autenticar(req); if (!u) return json(res, 401, { erro: 'Entre novamente.' });
       const b = await corpoJSON();
       if (u.senha && !confereSenha(b.atual || '', u.senha)) return json(res, 400, { erro: 'A senha atual não confere.' });
       const fr = senhaFraca(b.nova); if (fr) return json(res, 400, { erro: fr });
-      u.senha = hashSenha(b.nova); salvarDB();
+      u.senha = hashSenha(b.nova); u.trocarSenha = false; salvarDB();
       return json(res, 200, { ok: true });
     }
     if (rota === '/api/sair' && req.method === 'POST') {

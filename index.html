@@ -86,6 +86,7 @@ h1,h2,h3{font-family:var(--f-display);line-height:1.1;margin:0;text-wrap:balance
 .voltar{width:42px;height:42px;border-radius:14px;border:0;background:rgba(255,255,255,.16);color:inherit;font-size:26px;line-height:1;display:grid;place-items:center;flex:none;margin-right:8px}
 .hello.comvoltar{display:flex;align-items:center}
 .pago{color:var(--good);font-weight:800}
+.sheetvoltar{border:0;background:var(--surface-2);color:var(--ink);border-radius:12px;padding:8px 14px;font-weight:800;font-size:15px;margin-bottom:8px}
 .tiles{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .tile{border-radius:18px;padding:14px;min-width:0;border:0;text-align:left;display:flex;flex-direction:column;gap:2px}
 .tile .t{font-size:13px;font-weight:800;color:var(--ink-2);display:flex;gap:6px;align-items:center}
@@ -302,7 +303,7 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
     { nome: 'Presentes/Doações', emoji: '🎁', cor: '#E0697A', chaves: ['presente', 'doacao', 'dizimo', 'oferta', 'aniversario', 'vaquinha'] },
     { nome: 'Outros', emoji: '✨', cor: '#9AA3AF', chaves: [] }
   ];
-  const TIPOS_ENTRADA = ['Salário', 'Adiantamento', 'Bônus/PLR', 'Comissão', '13º salário', 'Aposentadoria', 'Aluguel recebido', 'Venda', 'Pix recebido', 'Resgate de sonho', 'Outra renda'];
+  const TIPOS_ENTRADA = ['Salário', 'Adiantamento', 'Bônus/PLR', 'Comissão', '13º salário', 'Aposentadoria', 'Aluguel recebido', 'Venda', 'Pix recebido', 'Freela', 'Reembolso', 'Rendimentos', 'Resgate de sonho', 'Outra renda'];
 
   // ------------------------------------------------------------------ helpers
   const sem = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
@@ -460,7 +461,7 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
     return melhor || 'Outros';
   }
 
-  const VERBOS = /\b(gastei|paguei|comprei|almocei|jantei|abasteci|coloquei|botei|lancei|lanca|lancar|lance|anota|anotar|anote|registra|registrar|registre|adiciona|adicionar|adicione|foi|deu|custou|tive um gasto de|tive gasto de|gasto de|gasto|compra de|compra|fiz|fui|no valor de|valor de|reais|real|conto|contos|pila|r\$|com|de|do|da|no|na|em|um|uma|o|a|os|as|e|pra|para|pro|hoje|ontem|anteontem|agora|cartao|credito|debito|pix|dinheiro|no cartao|eu|me|meu|minha)\b/g;
+  const VERBOS = /\b(gastei|gastamos|gastar|gaste|despesa|despesas|saida|torrei|desembolsei|comprar|compramos|pagamos|criar|cria|crie|novo|nova|lancamento|registro|incluir|inclui|inclua|bota|botar|gastei|paguei|comprei|almocei|jantei|abasteci|coloquei|botei|lancei|lanca|lancar|lance|anota|anotar|anote|registra|registrar|registre|adiciona|adicionar|adicione|foi|deu|custou|tive um gasto de|tive gasto de|gasto de|gasto|compra de|compra|fiz|fui|no valor de|valor de|reais|real|conto|contos|pila|r\$|com|de|do|da|no|na|em|um|uma|o|a|os|as|e|pra|para|pro|hoje|ontem|anteontem|agora|cartao|credito|debito|pix|dinheiro|no cartao|eu|me|meu|minha)\b/g;
   function limparDescricao(original, remover) {
     let t = ' ' + extensoParaNumero(sem(original)) + ' ';
     const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -645,10 +646,14 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
       return { tipo: 'sonho', valor: val.valor, termo: generico ? '' : restoOrig.replace(/\b(cofrinho|caixinha)\b/gi, '').trim(), investir: /\binvest|aplic/.test(t), data: dt ? dt.data : iso(hoje) };
     }
 
-    // ENTRADA
-    if (/\b(recebi|ganhei|entrou|caiu|recebimento|me pagaram|vendi|salario caiu|pingou)\b/.test(t) && val) {
-      let tipoE = /salario/.test(t) ? 'Salário' : /adiantamento|vale\b/.test(t) ? 'Adiantamento' : /13|decimo/.test(t) ? '13º salário' : /bonus|plr/.test(t) ? 'Bônus/PLR' : /comissao/.test(t) ? 'Comissão' : /aluguel/.test(t) ? 'Aluguel recebido' : /vendi|venda/.test(t) ? 'Venda' : /pix/.test(t) ? 'Pix recebido' : /aposentadoria|inss/.test(t) ? 'Aposentadoria' : 'Outra renda';
-      const desc = limparDescricao(original, [val.trecho, dt && dt.trecho, 'recebi', 'ganhei', 'entrou', 'caiu', 'me pagaram', 'pingou']) || tipoE;
+    // ENTRADA (renda) — todas as formas comuns de dizer que entrou dinheiro
+    const fortesEntrada = /\b(recebi|recebemos|receber|recebido|recebida|ganhei|ganhamos|entrou|entrada|entradas|renda|rendas|receita|receitas|caiu|cairam|pingou|me pagaram|pagaram|depositaram|transferiram pra mim|me mandaram|recebimento|faturei|lucrei|lucro)\b/;
+    const fracosEntrada = /\b(salario|adiantamento|vale|13o?|decimo terceiro|bonus|plr|comissao|aposentadoria|pensao|aluguel recebido|reembolso|restituicao|cashback|freela|freelance|venda|vendi|rendimento|dividendos?|pro labore)\b/;
+    const verbosGasto = /\b(gastei|gastamos|gasto|gastar|comprei|compramos|compra|comprar|paguei|pagamos|pagar|despesa|saida|torrei|desembolsei|debitou|saiu)\b/;
+    const ehEntrada = val && (fortesEntrada.test(t) && !/\b(receita medica|receita de bolo)\b/.test(t) || (fracosEntrada.test(t) && !verbosGasto.test(t)));
+    if (ehEntrada && !(verbosGasto.test(t) && !fortesEntrada.test(t))) {
+      let tipoE = /salario/.test(t) ? 'Salário' : /adiantamento|vale\b/.test(t) ? 'Adiantamento' : /13|decimo/.test(t) ? '13º salário' : /bonus|plr/.test(t) ? 'Bônus/PLR' : /comissao/.test(t) ? 'Comissão' : /aluguel/.test(t) ? 'Aluguel recebido' : /vendi|venda/.test(t) ? 'Venda' : /reembolso|restituicao|cashback/.test(t) ? 'Reembolso' : /rendimento|dividendo/.test(t) ? 'Rendimentos' : /freela/.test(t) ? 'Freela' : /pix/.test(t) ? 'Pix recebido' : /aposentadoria|inss/.test(t) ? 'Aposentadoria' : 'Outra renda';
+      const desc = limparDescricao(original, [val.trecho, dt && dt.trecho, 'recebi', 'recebemos', 'receber', 'recebido', 'recebida', 'ganhei', 'ganhamos', 'entrou', 'entrada', 'renda', 'receita', 'caiu', 'me pagaram', 'pagaram', 'pingou', 'depositaram', 'criar', 'cria', 'crie', 'nova', 'novo', 'lançar', 'lança', 'lance', 'registrar', 'adicionar', 'adiciona', 'colocar', 'coloca', 'vendi', 'por', 'pela', 'pelo']) || tipoE;
       return { tipo: 'entrada', valor: val.valor, desc, cat: tipoE, data: dt ? dt.data : iso(hoje) };
     }
 
@@ -979,7 +984,7 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
       pctOrcamento: orcamento > 0 ? gastoTotal / orcamento : 0, pctGuardado: entradas > 0 ? guardado / entradas : 0,
       maiorCategoria: maior ? { nome: maior[0], valor: maior[1] } : null, anuaisMes, lancamentos: L,
       // dinheiro que já saiu de fato: gastos pagos (dinheiro, pix, débito), contas pagas, faturas pagas e o que foi guardado
-      jaSaiu: (() => { const g = L.filter((l) => l.tipo === 'gasto' && !l.ticket && !l.cartaoId && l.pagamento !== 'Cartão').reduce((a, b) => a + b.valor, 0); const fat = (estado.cartoes || []).reduce((a, c) => { const f = fatura(estado, c.id, ym); return a + (f ? f.pago : 0); }, 0); const parcSem = parcs.filter((x) => !x.p.cartaoId).reduce((a, b) => a + b.p.valor, 0); return g + fixasPagas + fat + parcSem + guardado; })()
+      jaSaiu: (() => { const g = L.filter((l) => l.tipo === 'gasto' && !l.ticket && !l.cartaoId && l.pagamento !== 'Cartão').reduce((a, b) => a + b.valor, 0); const fat = (estado.cartoes || []).reduce((a, c) => { const f = fatura(estado, c.id, ym); return a + (f ? f.pago : 0); }, 0); const parcSem = parcs.filter((x) => !x.p.cartaoId && x.p.pagos && x.p.pagos[ym]).reduce((a, b) => a + b.p.valor, 0); return g + fixasPagas + fat + parcSem + guardado; })()
     };
   }
   function resumoSimples(estado, ym) {
@@ -1122,7 +1127,15 @@ try {
   if (qs.get('t')) { localStorage.setItem('cc-token', token); localStorage.removeItem(KEY); }
   if (qs.get('t') || qs.get('r')) history.replaceState(null, '', location.pathname + location.hash);
 } catch(e){}
-let conta = null, cfg = { whatsapp: '' };
+let conta = null, cfg = { whatsapp: '', cadastroAberto: true }, codAcesso = '', infoAcesso = null;
+try { codAcesso = new URLSearchParams(location.search).get('acesso') || ''; if (codAcesso) history.replaceState(null, '', location.pathname + location.hash); } catch(e){}
+let promptInstalar = null;
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); promptInstalar = e; const b = document.querySelectorAll('.bt-instalar'); b.forEach((x) => x.hidden = false); });
+const ehIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+const instalado = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+function botaoInstalar(estilo){ if (instalado()) return ''; return '<button type="button" class="btn block bt-instalar" ' + (promptInstalar || ehIOS ? '' : 'hidden') + ' style="' + (estilo || '') + '">📲 Instalar o Sonhaí no celular</button>'; }
+async function instalarApp(){ if (promptInstalar) { promptInstalar.prompt(); try { await promptInstalar.userChoice; } catch(e){} promptInstalar = null; } else if (ehIOS) sheet('<h3>📲 Instalar no iPhone</h3><p>1. Toque no botão <b>Compartilhar</b> (quadrado com seta) na barra do Safari.<br>2. Escolha <b>Adicionar à Tela de Início</b>.<br>3. Toque em <b>Adicionar</b>.</p><button class="btn pri block" id="ios-ok">Entendi</button>', () => { $('#ios-ok').onclick = () => fechar(); }); }
+document.addEventListener('click', (e) => { const b = e.target.closest && e.target.closest('.bt-instalar'); if (b) instalarApp(); });
 
 const hoje = () => new Date();
 const hojeISO = () => C.iso(hoje());
@@ -1210,15 +1223,26 @@ function go(tela){
   render(); scrollTo(0, 0);
 }
 function voltar(){ if (profundidade > 0) { try { history.back(); return; } catch(e){} } go('inicio'); }
-function sheet(html, onMount){
+let sheetAberta = false, ignorarPop = false;
+function sheet(html, onMount, opts){
+  opts = opts || {};
+  if (!sheetAberta) { try { history.pushState({ s: 1 }, '', location.hash || '#' + view.tela); } catch(e){} sheetAberta = true; }
+  html = (opts.fixa ? '' : '<button type="button" class="sheetvoltar" id="sheet-voltar">‹ Voltar</button>') + html;
+  sheetFixa = !!opts.fixa;
   const L = $('#layer');
   L.innerHTML = '<div class="scrim" id="scrim"><div class="sheet" role="dialog" aria-modal="true"><div class="grab"></div>' + html + '</div></div>';
-  const sc = $('#scrim'); sc.addEventListener('click', (e) => { if (e.target === sc) fechar(); });
+  const sc = $('#scrim'); sc.addEventListener('click', (e) => { if (e.target === sc && !sheetFixa) fechar(); });
+  const sv = $('#sheet-voltar'); if (sv) sv.onclick = () => fechar();
   if (onMount) onMount($('.sheet', L));
   const f = $('.sheet input, .sheet select', L); if (f && !('ontouchstart' in window)) f.focus();
 }
-function fechar(){ $('#layer').innerHTML = ''; pararVoz(); }
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') fechar(); });
+let sheetFixa = false;
+function fechar(doPop){
+  $('#layer').innerHTML = ''; pararVoz(); sheetFixa = false;
+  if (SERVER && !token) setTimeout(() => { if (!$('#ln-form') && !token) telaEntrar('entrar'); }, 0);
+  if (sheetAberta) { sheetAberta = false; if (!doPop) { ignorarPop = true; try { history.back(); } catch(e){ ignorarPop = false; } } }
+}
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !sheetFixa) fechar(); });
 const statusConta = (c, ym) => {
   if (c.pagos && c.pagos[ym]) return { t: 'Paga', k: 'ok' };
   const hy = C.mesDe(hojeISO()); if (ym !== hy) return ym < hy ? { t: 'Não paga', k: 'bad' } : { t: 'Dia ' + c.dia, k: 'info' };
@@ -1237,6 +1261,9 @@ function ring(p, cor){
   const R = 22, CI = 2 * Math.PI * R; const pc = Math.max(0, Math.min(1, p));
   return '<svg class="ring" viewBox="0 0 56 56" aria-hidden="true"><circle cx="28" cy="28" r="' + R + '" fill="none" stroke="var(--line)" stroke-width="7"></circle><circle cx="28" cy="28" r="' + R + '" fill="none" stroke="' + (cor || 'var(--coral)') + '" stroke-width="7" stroke-linecap="round" stroke-dasharray="' + (CI * pc) + ' ' + CI + '" transform="rotate(-90 28 28)"></circle><text x="28" y="32" text-anchor="middle" font-size="12" font-weight="800" fill="var(--ink)">' + Math.round(pc * 100) + '%</text></svg>';
 }
+const parcPaga = (p, ym) => !!(p.pagos && p.pagos[ym]);
+const chipParc = (p, ym) => parcPaga(p, ym) ? '<span class="chip ok">Paga</span>' : '<span class="chip warn">A pagar</span>';
+const checkParc = (p, ym) => '<button class="check ' + (parcPaga(p, ym) ? 'on' : '') + '" data-pagparc="' + p.id + '" data-ym="' + ym + '" aria-label="' + (parcPaga(p, ym) ? 'Marcar como não paga' : 'Marcar parcela como paga') + '">' + (parcPaga(p, ym) ? '✓' : '') + '</button>';
 const cartaoDe = (id) => (S.cartoes || []).find((c) => c.id === id);
 const corSit = { paga: 'ok', parcial: 'warn', vencida: 'bad', aberta: 'info', vazia: 'info' };
 function ccardHTML(f, extra){
@@ -1272,7 +1299,7 @@ TELAS.inicio = function(){
   const venc = C.contasAVencer(S, hoje(), 1);
   const atras = C.contasAtrasadas(S, hoje());
   const ag = (S.agenda || []).filter((a) => a.data === hojeISO() && !a.feito).sort((a, b) => (a.hora || '99').localeCompare(b.hora || '99'));
-  const ult = r.lancamentos.slice().sort((a, b) => b.data.localeCompare(a.data) || (b.upd || 0) - (a.upd || 0)).slice(0, 5);
+  const ult = r.lancamentos.filter((l) => l.tipo === 'gasto').sort((a, b) => b.data.localeCompare(a.data) || (b.upd || 0) - (a.upd || 0)).slice(0, 5);
   const pagas = r.contas.filter((c) => c.pagos && c.pagos[view.ym]).length;
   let h = '';
   const disp = r.entradas - r.jaSaiu;
@@ -1280,7 +1307,7 @@ TELAS.inicio = function(){
   if (r.orcamento > 0) h += '<div class="meter"><div class="bar" role="progressbar" aria-valuenow="' + Math.round(pct * 100) + '" aria-valuemin="0" aria-valuemax="100"><div class="fill" style="width:' + Math.min(100, pct * 100) + '%;background:' + cor + '"></div></div><div class="legend"><span><b>' + Math.round(pct * 100) + '%</b> do orçamento usado</span><span>' + (r.orcamento - r.gastoTotal >= 0 ? 'Restam <b>' + M(r.orcamento - r.gastoTotal) + '</b>' : 'Passou <b>' + M(r.gastoTotal - r.orcamento) + '</b>') + '</span></div></div>';
   h += mood(r) + '</section>';
   h += '<section class="tiles" aria-label="Números do mês">' +
-    '<button class="tile t-in" data-go="gastos" data-aba="entradas"><span class="t">💰 Entrou</span><span class="v num">' + M(r.entradas) + '</span><span class="s">' + r.lancamentos.filter((l) => l.tipo === 'entrada').length + ' entradas</span></button>' +
+    '<button class="tile t-in" data-go="rendas"><span class="t">💰 Entrou</span><span class="v num">' + M(r.entradas) + '</span><span class="s">' + r.lancamentos.filter((l) => l.tipo === 'entrada').length + ' rendas</span></button>' +
     '<button class="tile t-out" data-go="gastos"><span class="t">🛒 Gastei</span><span class="v num">' + M(r.gastoTotal) + '</span><span class="s">Fixas ' + M(r.fixas).replace(',00','') + ' · dia a dia ' + M(r.gastosDia).replace(',00','') + '</span></button>' +
     '<button class="tile t-dream" data-go="sonhos"><span class="t">⭐ Guardei</span><span class="v num">' + M(r.guardado) + '</span><span class="s">' + Math.round(r.pctGuardado * 100) + '% do que entrou</span></button>' +
     '<button class="tile t-bal" data-go="relatorios"><span class="t">🏦 Saldo acumulado</span><span class="v num ' + (r.saldoAcum < 0 ? 'neg' : '') + '">' + M(r.saldoAcum) + '</span><span class="s">' + (r.maiorCategoria ? 'Maior gasto: ' + esc(r.maiorCategoria.nome) : 'Sem gastos ainda') + '</span></button></section>';
@@ -1300,18 +1327,20 @@ TELAS.inicio = function(){
   h += '<section class="card"><div class="cardhead"><h2>⭐ Meus sonhos</h2><button class="link" data-go="sonhos">Ver todos ›</button></div><div class="dreams">' + (S.sonhos || []).map((s) => { const tot = C.totalSonho(s); const p = s.custo ? tot / s.custo : 0; const sg = sugestaoSonho(s); return '<button class="dream" data-sonho="' + s.id + '"><div class="top2">' + ring(p) + '<div style="min-width:0"><div class="n">' + (s.emoji || '⭐') + ' ' + esc(s.nome) + '</div><div class="s num">' + brl(tot) + (s.custo ? ' de ' + brl(s.custo) : '') + '</div></div></div><div class="s">' + (sg.mensal ? 'Guarde ' + brl(sg.mensal) + '/mês' : s.custo ? 'Defina um prazo' : 'Defina quanto custa') + '</div></button>'; }).join('') + '</div></section>';
   if ((S.cartoes || []).length) h += '<section class="card"><div class="cardhead"><h2>💳 Cartões</h2><button class="link" data-go="cartoes">Ver faturas ›</button></div><div class="cards">' + S.cartoes.map((c) => ccardHTML(C.fatura(S, c.id, view.ym, hoje()))).join('') + '</div></section>';
   h += '<section class="card"><div class="cardhead"><h2>🧾 Contas do mês</h2><button class="link" data-go="contas">Ver contas ›</button></div><div class="meter" style="margin-top:0"><div class="bar"><div class="fill" style="width:' + (r.contas.length ? pagas / r.contas.length * 100 : 0) + '%;background:var(--sky)"></div></div><div class="legend"><span><b>' + pagas + '</b> de ' + r.contas.length + ' pagas</span><span>Falta pagar <b>' + brl(r.fixas - r.fixasPagas) + '</b></span></div></div>' + (r.parcelas ? '<div class="note" style="margin-top:10px">🛍️ Parcelas do cartão neste mês: <b>' + brl(r.parcelas) + '</b> (' + r.parcs.length + ' compras)</div>' : '') + (r.anuaisMes.length ? '<div class="note" style="margin-top:8px">📌 Vence este mês: ' + r.anuaisMes.map((a) => esc(a.nome) + ' (' + brl(a.valor) + ')').join(', ') + '</div>' : '') + '</section>';
-  h += '<section class="card"><div class="cardhead"><h2>🕑 Últimos lançamentos</h2><button class="link" data-go="gastos">Ver todos ›</button></div><div class="list">' + (ult.length ? ult.map(itemLanc).join('') : '<div class="empty"><span class="e">🎤</span>Toque no microfone e diga: “gastei 30 reais na padaria”.</div>') + '</div></section>';
+  h += '<section class="card"><div class="cardhead"><h2>🕑 Últimos gastos</h2><button class="link" data-go="gastos">Ver todos ›</button></div><div class="list">' + (ult.length ? ult.map(itemLanc).join('') : '<div class="empty"><span class="e">🎤</span>Toque no microfone e diga: “gastei 30 reais na padaria”.</div>') + '</div></section>';
   h += '<section class="quote" role="note"><span style="font-size:26px">💙</span><span>' + esc(C.INCENTIVOS[new Date().getDate() % C.INCENTIVOS.length]) + '</span></section>';
   return h;
 };
 
-TELAS.gastos = function(){
+TELAS.rendas = function(){ view.abaGastos = 'entradas'; const h = TELAS.gastos(true); return h; };
+TELAS.gastos = function(ehRenda){
+  view.abaGastos = ehRenda === true ? 'entradas' : 'gastos';
   const L = (S.lancamentos || []).filter((l) => C.mesDe(l.data) === view.ym && (view.abaGastos === 'entradas' ? l.tipo === 'entrada' : l.tipo === 'gasto'));
   const f = L.filter((l) => (!view.filtroCat || l.cat === view.filtroCat) && (!view.busca || C.sem(l.desc + ' ' + l.cat).includes(C.sem(view.busca)))).sort((a, b) => b.data.localeCompare(a.data) || (b.upd || 0) - (a.upd || 0));
   const total = f.reduce((a, b) => a + b.valor, 0);
   const catsUsadas = Array.from(new Set(L.map((l) => l.cat)));
-  let h = '<section class="card"><div class="seg" role="tablist"><button class="' + (view.abaGastos === 'gastos' ? 'on' : '') + '" data-aba-g="gastos" role="tab">🛒 Gastos do dia a dia</button><button class="' + (view.abaGastos === 'entradas' ? 'on' : '') + '" data-aba-g="entradas" role="tab">💰 Entradas</button></div>';
-  h += '<div style="display:grid;gap:10px;margin-top:12px"><input class="search" id="busca" type="search" placeholder="Buscar…" value="' + esc(view.busca) + '" aria-label="Buscar lançamentos">';
+  let h = '<section class="card"><h2 style="margin-bottom:10px">' + (view.abaGastos === 'entradas' ? '💰 Rendas do mês' : '🛒 Gastos do dia a dia') + '</h2>';
+  h += '<div style="display:grid;gap:10px"><input class="search" id="busca" type="search" placeholder="Buscar…" value="' + esc(view.busca) + '" aria-label="Buscar lançamentos">';
   if (catsUsadas.length > 1) h += '<div class="chips"><button class="' + (!view.filtroCat ? 'on' : '') + '" data-fcat="">Todas</button>' + catsUsadas.map((c) => '<button class="' + (view.filtroCat === c ? 'on' : '') + '" data-fcat="' + esc(c) + '">' + catInfo(c).emoji + ' ' + esc(c) + '</button>').join('') + '</div>';
   h += '<div class="cardhead" style="margin:0"><span class="sub"><b class="num" style="color:var(--ink);font-size:18px">' + brl(total) + '</b> em ' + f.length + ' lançamentos</span><button class="addbtn" data-novo="' + (view.abaGastos === 'entradas' ? 'entrada' : 'gasto') + '">+ Adicionar</button></div></div>';
   let dia = ''; h += '<div class="list">';
@@ -1328,7 +1357,7 @@ TELAS.contas = function(){
   let h = '<section class="card"><div class="cardhead"><h2>🧾 Contas fixas</h2><button class="addbtn" data-novo="conta">+ Nova conta</button></div><div class="sub" style="margin-bottom:8px">Total ' + brl(r.fixas) + ' · pago ' + brl(r.fixasPagas) + ' · falta ' + brl(r.fixas - r.fixasPagas) + '</div><div class="list">';
   h += lista.map((c) => { const st = statusConta(c, ym); const ci = catInfo(c.cat); return '<div class="item"><button class="check ' + (c.pagos && c.pagos[ym] ? 'on' : '') + '" data-pagar="' + c.id + '" aria-label="Paguei ' + esc(c.nome) + '">' + (c.pagos && c.pagos[ym] ? '✓' : '') + '</button><button class="mid" style="border:0;background:none;text-align:left;padding:0" data-edit-conta="' + c.id + '"><span class="ttl" style="display:block">' + ci.emoji + ' ' + esc(c.nome) + '</span><span class="meta" style="display:block">Todo dia ' + c.dia + ' · ' + esc(c.cat) + '</span></button><span style="display:grid;justify-items:end;gap:4px"><span class="val num">' + brl(c.valor) + '</span><span class="chip ' + st.k + '">' + st.t + '</span></span></div>'; }).join('') || '<div class="empty"><span class="e">🧾</span>Cadastre aluguel, luz, água, internet… Eu te lembro pelo WhatsApp um dia antes e no dia.</div>';
   h += '</div></section>';
-  h += '<section class="card"><div class="cardhead"><h2>🛍️ Parcelas do cartão</h2><button class="link" data-go="parcelados">Gerenciar ›</button></div><div class="list">' + (r.parcs.length ? r.parcs.map((x) => '<div class="item"><span class="ico" style="background:' + soft(catInfo(x.p.cat).cor) + '">' + catInfo(x.p.cat).emoji + '</span><span class="mid"><span class="ttl">' + esc(x.p.desc) + '</span><span class="meta">Parcela ' + x.k + ' de ' + x.p.n + (cartaoDe(x.p.cartaoId) ? ' · 💳 ' + esc(cartaoDe(x.p.cartaoId).nome) : ' · sem cartão') + '</span></span><span class="val num">' + brl(x.p.valor) + '</span></div>').join('') : '<div class="empty">Nenhuma parcela neste mês. 🙌</div>') + '</div></section>';
+  h += '<section class="card"><div class="cardhead"><h2>🛍️ Parcelas do cartão</h2><button class="link" data-go="parcelados">Gerenciar ›</button></div><div class="list">' + (r.parcs.length ? r.parcs.map((x) => '<div class="item"><span class="ico" style="background:' + soft(catInfo(x.p.cat).cor) + '">' + catInfo(x.p.cat).emoji + '</span><span class="mid"><span class="ttl">' + esc(x.p.desc) + '</span><span class="meta">Parcela ' + x.k + ' de ' + x.p.n + (cartaoDe(x.p.cartaoId) ? ' · 💳 ' + esc(cartaoDe(x.p.cartaoId).nome) : ' · sem cartão') + '</span></span><span style="display:grid;justify-items:end;gap:4px"><span class="val num">' + brl(x.p.valor) + '</span>' + chipParc(x.p, ym) + '</span>' + checkParc(x.p, ym) + '</div>').join('') : '<div class="empty">Nenhuma parcela neste mês. 🙌</div>') + '</div></section>';
   return h;
 };
 
@@ -1341,7 +1370,7 @@ TELAS.cartoes = function(){
   tot.forEach((f) => {
     const itens = f.compras.slice().sort((a, b) => b.data.localeCompare(a.data));
     h += '<section class="card" style="display:grid;gap:12px">' + ccardHTML(f) + '<div class="btnrow"><button class="btn ' + (f.situacao === 'paga' ? 'ghost' : 'pri') + '" data-pagfat="' + f.cartao.id + '" data-ym="' + ym + '">' + (f.situacao === 'paga' ? '✓ Paga · alterar' : f.situacao === 'parcial' ? '💳 Pagar o restante' : '💳 Pagar fatura') + '</button><button class="btn ghost" data-edit-cartao="' + f.cartao.id + '" style="flex:0 0 auto">✎</button></div>';
-    h += '<div class="list">' + (f.anterior ? '<div class="item"><span class="ico" style="background:var(--tile-out)">↪️</span><span class="mid"><span class="ttl">Restante da fatura anterior</span><span class="meta">Pagamento parcial em ' + C.mesCurto(C.somaMes(ym, -1)) + '</span></span><span class="val num">' + brl(f.anterior) + '</span></div>' : '') + f.parcelas.map((x) => '<button class="item" data-edit-parc="' + x.p.id + '"><span class="ico" style="background:' + soft(catInfo(x.p.cat).cor) + '">🛍️</span><span class="mid"><span class="ttl">' + esc(x.p.desc) + '</span><span class="meta">Parcela ' + x.k + ' de ' + x.p.n + '</span></span><span class="val num">' + brl(x.p.valor) + '</span></button>').join('') + itens.map(itemLanc).join('') + (!f.total ? '<div class="empty">Nenhuma compra nesta fatura. 🙌</div>' : '') + '</div></section>';
+    h += '<div class="list">' + (f.anterior ? '<div class="item"><span class="ico" style="background:var(--tile-out)">↪️</span><span class="mid"><span class="ttl">Restante da fatura anterior</span><span class="meta">Pagamento parcial em ' + C.mesCurto(C.somaMes(ym, -1)) + '</span></span><span class="val num">' + brl(f.anterior) + '</span></div>' : '') + f.parcelas.map((x) => '<div class="item"><button class="mid" style="border:0;background:none;text-align:left;padding:0;display:flex;gap:12px;align-items:center" data-edit-parc="' + x.p.id + '"><span class="ico" style="background:' + soft(catInfo(x.p.cat).cor) + '">🛍️</span><span style="min-width:0"><span class="ttl" style="display:block">' + esc(x.p.desc) + '</span><span class="meta" style="display:block">Parcela ' + x.k + ' de ' + x.p.n + '</span></span></button><span class="val num">' + brl(x.p.valor) + '</span>' + checkParc(x.p, ym) + '</div>').join('') + itens.map(itemLanc).join('') + (!f.total ? '<div class="empty">Nenhuma compra nesta fatura. 🙌</div>' : '') + '</div></section>';
   });
   return h + '<div class="note">💡 Diga “a fatura do Itaú vence dia 10 e fecha dia 3” para ajustar o vencimento e o fechamento. Compras feitas a partir do dia do fechamento caem na fatura seguinte.</div>';
 };
@@ -1349,16 +1378,49 @@ TELAS.cartoes = function(){
 TELAS.master = function(){
   if (!conta || !conta.admin) return '<section class="card"><div class="empty">Acesso restrito.</div></section>';
   if (!view.adm) { carregarAdmin(); return '<section class="card"><div class="empty">Carregando usuários…</div></section>'; }
-  const L = view.adm.usuarios; const busca = C.sem(view.admBusca || '');
-  const f = L.filter((u) => !busca || C.sem(u.nome + ' ' + u.fone).includes(busca));
+  const L = view.adm.usuarios; const busca = C.sem(view.admBusca || ''); const filtro = view.admFiltro || 'todos';
+  const st = (u) => u.bloqueado ? 'bloqueado' : u.expirado ? 'vencido' : u.dias != null && u.dias <= 7 ? 'vencendo' : 'ativo';
+  const f = L.filter((u) => (!busca || C.sem(u.nome + ' ' + u.fone + ' ' + u.email).includes(busca)) && (filtro === 'todos' || st(u) === filtro));
   const t = view.adm.totais;
-  let h = '<section class="tiles"><div class="tile t-bal"><span class="t">👥 Usuários</span><span class="v num">' + t.usuarios + '</span><span class="s">' + t.novos7 + ' novos em 7 dias</span></div><div class="tile t-in"><span class="t">🟢 Ativos (7 dias)</span><span class="v num">' + t.ativos7 + '</span><span class="s">' + t.ativos30 + ' em 30 dias</span></div><div class="tile t-dream"><span class="t">💬 Canais</span><span class="v num">' + t.telegram + ' TG · ' + t.whatsapp + ' WA</span><span class="s">conectados</span></div><div class="tile t-out"><span class="t">🗄️ Banco</span><span class="v num">' + (t.bytes / 1048576).toFixed(1) + ' MB</span><span class="s">de 500 MB grátis · ' + t.lancamentos + ' lançamentos</span></div></section>';
-  h += '<section class="card"><div class="cardhead"><h2>👑 Usuários</h2><button class="addbtn" id="adm-bk">⬇️ Backup geral</button></div><input class="search" id="adm-busca" type="search" placeholder="Buscar por nome ou telefone" value="' + esc(view.admBusca || '') + '"><div class="list" style="margin-top:8px">';
-  h += f.map((u) => '<div class="item"><span class="ico" style="background:' + (u.bloqueado ? 'var(--tile-out)' : 'var(--tile-in)') + '">' + (u.admin ? '👑' : u.bloqueado ? '⛔' : '👤') + '</span><span class="mid"><span class="ttl">' + esc(u.nome || '(sem nome)') + '</span><span class="meta">+' + esc(u.fone) + ' · desde ' + C.dataBR(u.criado) + ' · visto ' + (u.ultimo ? C.dataBR(u.ultimo) : '—') + '</span><span class="meta">' + u.lancamentos + ' lançamentos · ' + (u.telegram ? '✈️ ' : '') + (u.whatsapp ? '💬 ' : '') + (u.temSenha ? '🔐' : 'sem senha') + '</span></span>' + (u.admin ? '' : '<button class="btn ' + (u.bloqueado ? 'ghost' : 'danger') + '" style="padding:8px 10px;font-size:13px" data-bloq="' + esc(u.k) + '">' + (u.bloqueado ? 'Liberar' : 'Bloquear') + '</button>') + '</div>').join('') || '<div class="empty">Nenhum usuário.</div>';
-  h += '</div></section><div class="note">🔒 Por privacidade (LGPD), o painel mostra só dados da conta e quantidades. Os valores financeiros de cada pessoa não aparecem aqui.</div>';
+  let h = '<section class="tiles"><div class="tile t-bal"><span class="t">👥 Usuários</span><span class="v num">' + t.usuarios + '</span><span class="s">' + t.novos7 + ' novos em 7 dias</span></div><div class="tile t-in"><span class="t">🟢 Ativos (7 dias)</span><span class="v num">' + t.ativos7 + '</span><span class="s">' + t.ativos30 + ' em 30 dias</span></div><div class="tile t-dream"><span class="t">⏳ Vencendo (7 dias)</span><span class="v num">' + t.vencendo + '</span><span class="s">' + t.expirados + ' já vencidos</span></div><div class="tile t-out"><span class="t">🗄️ Banco</span><span class="v num">' + (t.bytes / 1048576).toFixed(1) + ' MB</span><span class="s">de 500 MB · ' + t.lancamentos + ' lançamentos</span></div></section>';
+  h += '<section class="card"><div class="btnrow"><button class="btn sun" id="adm-novo">➕ Novo acesso</button><button class="btn ghost" id="adm-bk">⬇️ Backup geral</button></div><label class="item" style="cursor:pointer;margin-top:8px"><input type="checkbox" id="adm-cad" ' + (view.adm.config.cadastroAberto ? 'checked' : '') + ' style="width:22px;height:22px"><span class="mid"><span class="ttl">Cadastro aberto no app</span><span class="meta">Qualquer pessoa cria conta com 7 dias grátis. Desligado: só entra quem recebe seu link.</span></span></label></section>';
+  h += '<section class="card"><h2 style="margin-bottom:10px">👑 Usuários</h2><input class="search" id="adm-busca" type="search" placeholder="Buscar por nome, telefone ou e-mail" value="' + esc(view.admBusca || '') + '"><div class="chips" style="margin-top:8px">' + [['todos', 'Todos'], ['ativo', 'Ativos'], ['vencendo', 'Vencendo'], ['vencido', 'Vencidos'], ['bloqueado', 'Bloqueados']].map((x) => '<button class="' + (filtro === x[0] ? 'on' : '') + '" data-afil="' + x[0] + '">' + x[1] + ' (' + (x[0] === 'todos' ? L.length : L.filter((u) => st(u) === x[0]).length) + ')</button>').join('') + '</div><div class="list" style="margin-top:8px">';
+  const chip = (u) => ({ bloqueado: '<span class="chip bad">Bloqueado</span>', vencido: '<span class="chip bad">Vencido</span>', vencendo: '<span class="chip warn">Vence em ' + u.dias + 'd</span>', ativo: '<span class="chip ok">' + (u.validade ? 'Até ' + C.dataBR(u.validade) : 'Ilimitado') + '</span>' })[st(u)];
+  h += f.map((u) => '<button class="item" data-adm="' + esc(u.k) + '"><span class="ico" style="background:var(--surface-2)">' + (u.admin ? '👑' : '👤') + '</span><span class="mid"><span class="ttl">' + esc(u.nome || '(sem nome)') + '</span><span class="meta">' + esc(fmtFone(u.fone)) + (u.email ? ' · ' + esc(u.email) : '') + '</span><span class="meta">' + esc((view.adm.planos[u.plano] || {}).nome || 'Ilimitado') + ' · visto ' + (u.ultimo ? C.dataBR(u.ultimo) : '—') + ' · ' + u.lancamentos + ' lanç.' + (u.trocarSenha ? ' · aguardando 1º acesso' : '') + '</span></span>' + chip(u) + '</button>').join('') || '<div class="empty">Nenhum usuário aqui.</div>';
+  h += '</div></section><div class="note">🔒 Por privacidade (LGPD), o painel mostra dados de acesso (nome, telefone, e-mail, plano), mas não os valores financeiros de cada pessoa.</div>';
   return h;
 };
-async function carregarAdmin(){ try { view.adm = await api('/api/admin/usuarios'); } catch(e){ view.adm = { usuarios: [], totais: { usuarios: 0, novos7: 0, ativos7: 0, ativos30: 0, telegram: 0, whatsapp: 0, bytes: 0, lancamentos: 0 } }; toast(e.message); } render(); }
+const fmtFone = (f) => { const d = String(f || '').replace(/\D/g, '').replace(/^55/, ''); return d.length >= 10 ? '(' + d.slice(0, 2) + ') ' + d.slice(2, d.length - 4) + '-' + d.slice(-4) : f; };
+const PLANOS_UI = [['gratis', 'Grátis 7 dias'], ['1m', '1 mês'], ['3m', '3 meses'], ['6m', '6 meses'], ['12m', '1 ano'], ['ilimitado', 'Ilimitado']];
+function mostrarAcesso(j, titulo){
+  sheet('<h3>' + titulo + '</h3><p class="sub">Envie esta mensagem para o cliente. O link abre e instala o app.</p><textarea class="search" id="acs-msg" style="height:230px;font-size:14px" readonly>' + esc(j.mensagem.replace(/\*/g, '')) + '</textarea><div class="btnrow" style="margin-top:10px"><button class="btn ghost" id="acs-cp">📋 Copiar</button><a class="btn sun" href="https://wa.me/' + esc(j.fone) + '?text=' + encodeURIComponent(j.mensagem) + '" target="_blank" rel="noopener">💬 Enviar no WhatsApp</a></div><div class="note" style="margin-top:10px">🔑 Senha inicial: <b class="num">' + esc(j.senha) + '</b>. Ela só aparece agora. Se perder, gere uma nova senha no cadastro do cliente.</div>', () => {
+    $('#acs-cp').onclick = () => { const ta = $('#acs-msg'); try { navigator.clipboard.writeText(ta.value).then(() => toast('📋 Mensagem copiada'), () => { ta.select(); }); } catch(e){ ta.select(); } };
+  });
+}
+function formNovoAcesso(){
+  let plano = '1m';
+  sheet('<h3>➕ Novo acesso</h3><form id="na"><div class="field"><label for="na-n">Nome do cliente</label><input id="na-n" required></div><div class="field"><label for="na-f">WhatsApp com DDD</label><input id="na-f" inputmode="tel" required></div><div class="field"><label for="na-e">E-mail (opcional)</label><input id="na-e" type="email" inputmode="email"></div><div class="field"><label>Tempo de uso contratado</label><div class="chips" id="na-p" style="flex-wrap:wrap">' + PLANOS_UI.map((x) => '<button type="button" data-p="' + x[0] + '" class="' + (x[0] === plano ? 'on' : '') + '">' + x[1] + '</button>').join('') + '</div></div><div class="note" id="na-err" hidden style="color:var(--bad)"></div><button class="btn pri block" type="submit">Criar acesso e gerar link</button></form>', (root) => {
+    root.querySelectorAll('[data-p]').forEach((b) => b.onclick = () => { plano = b.dataset.p; root.querySelectorAll('[data-p]').forEach((x) => x.classList.toggle('on', x === b)); });
+    $('#na').onsubmit = async (e) => { e.preventDefault(); const er = $('#na-err'); er.hidden = true; try { const j = await api('/api/admin/criar', { nome: $('#na-n').value, fone: $('#na-f').value, email: $('#na-e').value, plano }); view.adm = null; fechar(); render(); setTimeout(() => mostrarAcesso(j, '✅ Acesso criado!'), 60); } catch(x){ er.textContent = x.message; er.hidden = false; } };
+  });
+}
+function formUsuarioAdm(u){
+  const P = view.adm.planos;
+  sheet('<h3>' + (u.admin ? '👑 ' : '👤 ') + esc(u.nome || '(sem nome)') + '</h3><div class="list"><div class="item"><span class="ico" style="background:var(--tile-in)">📱</span><span class="mid"><span class="ttl">' + esc(fmtFone(u.fone)) + '</span><span class="meta">Login por WhatsApp</span></span></div><div class="item"><span class="ico" style="background:var(--tile-bal)">📅</span><span class="mid"><span class="ttl">' + esc((P[u.plano] || {}).nome || 'Ilimitado') + '</span><span class="meta">' + (u.validade ? (u.expirado ? 'Venceu em ' : 'Válido até ') + C.dataBR(u.validade) : 'Sem vencimento') + ' · desde ' + C.dataBR(u.criado) + (u.criadoPor === 'admin' ? ' (criado por você)' : '') + '</span></span></div></div>' +
+    '<form id="ue" style="margin-top:10px"><div class="grid2"><div class="field"><label for="ue-n">Nome</label><input id="ue-n" value="' + esc(u.nome) + '"></div><div class="field"><label for="ue-e">E-mail de login</label><input id="ue-e" type="email" value="' + esc(u.email) + '"></div></div><button class="btn ghost block" type="submit">💾 Salvar nome e e-mail</button></form>' +
+    (u.admin ? '' : '<h3 style="font-size:18px;margin:16px 0 8px">📅 Renovar / período de uso</h3><div class="chips" style="flex-wrap:wrap">' + PLANOS_UI.map((x) => '<button type="button" data-ren="' + x[0] + '">+ ' + x[1] + '</button>').join('') + '</div><div class="grid2" style="margin-top:8px;align-items:end"><div class="field" style="margin:0"><label for="ue-d">Ou vence em (data exata)</label><input id="ue-d" type="date" value="' + (u.validade || '') + '"></div><button class="btn ghost" id="ue-dok" type="button">Definir data</button></div>' +
+    '<h3 style="font-size:18px;margin:16px 0 8px">🔐 Acesso</h3><div class="btnrow"><button class="btn ghost" id="ue-senha" type="button">🔑 Nova senha inicial + link</button><button class="btn ' + (u.bloqueado ? 'ghost' : 'danger') + '" id="ue-bloq" type="button">' + (u.bloqueado ? '✅ Liberar' : '⛔ Bloquear') + '</button></div><button class="btn danger block" id="ue-del" type="button" style="margin-top:8px">🗑️ Excluir usuário e dados</button>'), () => {
+    const ok = (m) => { view.adm = null; fechar(); render(); toast(m); };
+    $('#ue').onsubmit = async (e) => { e.preventDefault(); try { await api('/api/admin/editar', { k: u.k, nome: $('#ue-n').value, email: $('#ue-e').value }); ok('💾 Dados salvos'); } catch(x){ toast(x.message); } };
+    if (u.admin) return;
+    document.querySelectorAll('[data-ren]').forEach((b) => b.onclick = async () => { try { const j = await api('/api/admin/renovar', { k: u.k, plano: b.dataset.ren }); ok(j.validade ? '📅 Válido até ' + C.dataBR(j.validade) : '♾️ Acesso ilimitado'); } catch(x){ toast(x.message); } });
+    $('#ue-dok').onclick = async () => { const d = $('#ue-d').value; if (!d) return; try { await api('/api/admin/renovar', { k: u.k, validade: d }); ok('📅 Válido até ' + C.dataBR(d)); } catch(x){ toast(x.message); } };
+    $('#ue-senha').onclick = async () => { try { const j = await api('/api/admin/senha', { k: u.k }); view.adm = null; fechar(); render(); setTimeout(() => mostrarAcesso(j, '🔑 Nova senha gerada'), 60); } catch(x){ toast(x.message); } };
+    $('#ue-bloq').onclick = async () => { try { await api('/api/admin/bloquear', { k: u.k, bloquear: !u.bloqueado }); ok(u.bloqueado ? '✅ Acesso liberado' : '⛔ Acesso bloqueado'); } catch(x){ toast(x.message); } };
+    $('#ue-del').onclick = () => confirmar('Excluir ' + (u.nome || fmtFone(u.fone)) + ' e TODOS os dados dele? Não dá para desfazer.', async () => { try { await api('/api/admin/excluir', { k: u.k }); view.adm = null; render(); toast('🗑️ Usuário excluído'); } catch(x){ toast(x.message); } });
+  });
+}
+async function carregarAdmin(){ try { view.adm = await api('/api/admin/usuarios'); } catch(e){ view.adm = { usuarios: [], planos: {}, config: { cadastroAberto: true }, totais: { usuarios: 0, novos7: 0, ativos7: 0, ativos30: 0, vencendo: 0, expirados: 0, bytes: 0, lancamentos: 0 } }; toast(e.message); } render(); }
 
 TELAS.parcelados = function(){
   const ym = C.mesDe(hojeISO());
@@ -1366,7 +1428,7 @@ TELAS.parcelados = function(){
   const ativos = L.filter((p) => C.parcelaNoMes(p, ym));
   let h = '<section class="card"><div class="cardhead"><h2>🛍️ Compras parceladas</h2><button class="addbtn" data-novo="parcelado">+ Nova</button></div><div class="sub" style="margin-bottom:8px">Lance uma vez só: as parcelas aparecem sozinhas nos meses certos. Hoje você paga <b>' + brl(ativos.reduce((a, b) => a + b.valor, 0)) + '</b>/mês.</div><div class="list">';
   const grupos = [...(S.cartoes || []).map((c) => ({ c, it: L.filter((p) => p.cartaoId === c.id) })), { c: null, it: L.filter((p) => !cartaoDe(p.cartaoId)) }].filter((g) => g.it.length);
-  const linhaP = (p) => { const k = C.parcelaNoMes(p, ym); const fim = C.somaMes(p.inicio, p.n - 1); const st = k ? { t: 'Pagando ' + k + ' de ' + p.n, k: 'info' } : fim < ym ? { t: '✓ Quitada', k: 'ok' } : { t: 'Começa ' + C.mesCurto(p.inicio), k: 'warn' }; return '<button class="item" data-edit-parc="' + p.id + '"><span class="ico" style="background:' + soft(catInfo(p.cat).cor) + '">' + catInfo(p.cat).emoji + '</span><span class="mid"><span class="ttl">' + esc(p.desc) + '</span><span class="meta">' + p.n + 'x de ' + brl(p.valor) + ' · até ' + C.mesCurto(fim) + '</span></span><span class="chip ' + st.k + '">' + st.t + '</span></button>'; };
+  const linhaP = (p) => { const k = C.parcelaNoMes(p, ym); if (k) { const fim0 = C.somaMes(p.inicio, p.n - 1); return '<div class="item"><button class="mid" style="border:0;background:none;text-align:left;padding:0;display:flex;gap:12px;align-items:center;min-width:0" data-edit-parc="' + p.id + '"><span class="ico" style="background:' + soft(catInfo(p.cat).cor) + '">' + catInfo(p.cat).emoji + '</span><span style="min-width:0"><span class="ttl" style="display:block">' + esc(p.desc) + '</span><span class="meta" style="display:block">Parcela ' + k + ' de ' + p.n + ' · ' + brl(p.valor) + ' · até ' + C.mesCurto(fim0) + '</span></span></button>' + chipParc(p, ym) + checkParc(p, ym) + '</div>'; } const fim = C.somaMes(p.inicio, p.n - 1); const st = k ? { t: 'Pagando ' + k + ' de ' + p.n, k: 'info' } : fim < ym ? { t: '✓ Quitada', k: 'ok' } : { t: 'Começa ' + C.mesCurto(p.inicio), k: 'warn' }; return '<button class="item" data-edit-parc="' + p.id + '"><span class="ico" style="background:' + soft(catInfo(p.cat).cor) + '">' + catInfo(p.cat).emoji + '</span><span class="mid"><span class="ttl">' + esc(p.desc) + '</span><span class="meta">' + p.n + 'x de ' + brl(p.valor) + ' · até ' + C.mesCurto(fim) + '</span></span><span class="chip ' + st.k + '">' + st.t + '</span></button>'; };
   h += grupos.map((g) => { const at = g.it.filter((p) => C.parcelaNoMes(p, ym)); return '<div class="daylbl">' + (g.c ? '<span class="cdot" style="background:' + g.c.cor + '"></span>💳 ' + esc(g.c.nome) : 'Sem cartão definido (toque para escolher)') + ' · ' + brl(at.reduce((a, b) => a + b.valor, 0)) + '/mês</div>' + g.it.map(linhaP).join(''); }).join('') || '<div class="empty"><span class="e">🛍️</span>Diga no microfone: “comprei uma TV de 2000 em 10x no cartão Nubank”.</div>';
   h += '</div></section><div class="note">💡 Compras pequenas parceladas se acumulam sem a gente perceber. Abaixo de R$ 200, prefira pagar à vista.</div>';
   return h;
@@ -1476,22 +1538,22 @@ TELAS.ajustes = function(){
 };
 
 TELAS.mais = function(){
-  const it = [['💳', 'Cartões', 'cartoes'], ['🧾', 'Contas', 'contas'], ['⭐', 'Sonhos', 'sonhos'], ['📈', 'Relatórios', 'relatorios'], ['🛍️', 'Parcelados', 'parcelados'], ['💳', 'Dívidas', 'dividas'], ['📌', 'Gastos do ano', 'anuais'], ['💰', 'Entradas', 'entradas'], ['💬', 'Mensagens', 'whatsapp'], ['⚙️', 'Ajustes', 'ajustes']].concat(conta && conta.admin ? [['👑', 'Painel master', 'master']] : []).filter((x) => x[2] !== 'entradas');
+  const it = [['💳', 'Cartões', 'cartoes'], ['🧾', 'Contas', 'contas'], ['⭐', 'Sonhos', 'sonhos'], ['📈', 'Relatórios', 'relatorios'], ['🛍️', 'Parcelados', 'parcelados'], ['💳', 'Dívidas', 'dividas'], ['📌', 'Gastos do ano', 'anuais'], ['💰', 'Rendas', 'rendas'], ['💬', 'Mensagens', 'whatsapp'], ['⚙️', 'Ajustes', 'ajustes']].concat(conta && conta.admin ? [['👑', 'Painel master', 'master']] : []).filter((x) => x[2] !== 'entradas');
   return '<section class="morelist">' + it.map((x) => '<button data-go="' + (x[2] === 'entradas' ? 'gastos' : x[2]) + '"' + (x[2] === 'entradas' ? ' data-aba="entradas"' : '') + '><span>' + x[0] + '</span><span>' + x[1] + '</span></button>').join('') + '</section><section class="card"><h2 style="font-size:18px;margin-bottom:6px">🎤 O que posso dizer?</h2><div class="sub" style="white-space:pre-line">' + esc(C.textoAjuda(S).split('\n').slice(3).join('\n')) + '</div></section>';
 };
 
-const TITULOS = { master: 'Painel master', cartoes: 'Cartões', inicio: '', gastos: 'Lançamentos', contas: 'Contas', parcelados: 'Parcelados', agenda: 'Agenda', sonhos: 'Sonhos', relatorios: 'Relatórios', dividas: 'Dívidas', anuais: 'Gastos do ano', whatsapp: 'Mensagens', ajustes: 'Ajustes', mais: 'Mais opções' };
+const TITULOS = { rendas: 'Rendas', master: 'Painel master', cartoes: 'Cartões', inicio: '', gastos: 'Lançamentos', contas: 'Contas', parcelados: 'Parcelados', agenda: 'Agenda', sonhos: 'Sonhos', relatorios: 'Relatórios', dividas: 'Dívidas', anuais: 'Gastos do ano', whatsapp: 'Mensagens', ajustes: 'Ajustes', mais: 'Mais opções' };
 
 // ------------------------------------------------------------ render
 function render(){
   aplicarTema();
   const t = view.tela; const nome = S.perfil.nome;
-  const mostraMes = ['inicio', 'gastos', 'contas', 'relatorios', 'cartoes'].includes(t);
+  const mostraMes = ['inicio', 'gastos', 'rendas', 'contas', 'relatorios', 'cartoes'].includes(t);
   let h = '<header class="top wrap"><span class="blob" style="width:180px;height:180px;background:var(--sun);right:-50px;top:-60px"></span><span class="blob" style="width:120px;height:120px;background:var(--coral);left:-40px;bottom:-50px"></span><div class="row"><div class="brand"><span class="logo" aria-hidden="true">' + LOGO + '</span>Sonhaí</div>' + (mostraMes ? '<div class="monthsel"><button data-mes="-1" aria-label="Mês anterior">‹</button><span>' + esc(C.nomeMes(view.ym).replace(' de ', ' ')) + '</span><button data-mes="1" aria-label="Próximo mês">›</button></div>' : '<button class="iconbtn" data-go="ajustes" aria-label="Ajustes">⚙️</button>') + '</div>';
   h += t === 'inicio' ? '<div class="hello">' + saudacao() + '<b>' + esc(nome || 'Que bom te ver!') + ' 👋</b></div>' : '<div class="hello comvoltar"><button class="voltar" id="voltar" aria-label="Voltar">‹</button><b>' + esc(TITULOS[t] || '') + '</b></div>';
   h += '</header>';
   if (S.demo && !SERVER) h += '<div class="demo" role="note"><span>🧪 Você está vendo dados de exemplo.</span><button id="sair-demo">Começar o meu</button></div>';
-  h += '<main class="content wrap">' + (t === 'inicio' ? avisoVerificar() : '') + (TELAS[t] || TELAS.inicio)() + '</main>';
+  h += '<main class="content wrap">' + (t === 'inicio' ? avisoPlano() + avisoVerificar() : '') + (TELAS[t] || TELAS.inicio)() + '</main>';
   $('#app').innerHTML = h;
   const navs = [['inicio', '🏠', 'Início'], ['gastos', '📋', 'Gastos'], ['mic'], ['agenda', '📌', 'Agenda'], ['mais', '☰', 'Mais']];
   $('#nav').innerHTML = navs.map((n) => n[0] === 'mic' ? '<div class="micwrap"><button class="mic" id="fab" aria-label="Falar um gasto">🎤</button><small>Falar</small></div>' : '<button class="' + (t === n[0] || (n[0] === 'mais' && !['inicio', 'gastos', 'agenda'].includes(t)) ? 'on' : '') + '" data-go="' + n[0] + '"><span class="i">' + n[1] + '</span>' + n[2] + '</button>').join('');
@@ -1500,7 +1562,7 @@ function render(){
 }
 const OLHO = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
 const OLHO_FECHADO = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.1M6.1 6.1C3.6 7.8 2 12 2 12s3.6 7 10 7a9.9 9.9 0 0 0 5.9-1.9"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>';
-const LOGO = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 21s-7.5-4.6-9.4-9.3C1.2 8.3 3.4 4.5 7 4.5c2 0 3.4 1.1 5 3 1.6-1.9 3-3 5-3 3.6 0 5.8 3.8 4.4 7.2C19.5 16.4 12 21 12 21z" fill="#1B3A6B"/><path d="M8.5 12.2l2.3 2.3 4.7-4.8" stroke="#FFC83D" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const LOGO = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 21.5s-7.8-4.7-9.7-9.6C.9 8.3 3.2 4.3 7 4.3c2.1 0 3.5 1.1 5 3 1.5-1.9 2.9-3 5-3 3.8 0 6.1 4 4.7 7.6-1.9 4.9-9.7 9.6-9.7 9.6z" fill="#1B3A6B"/><text x="12" y="16.2" text-anchor="middle" font-family="Arial Black,Arial,sans-serif" font-weight="900" font-size="10.5" fill="#FFC83D">$</text></svg>';
 function saudacao(){ const h = hoje().getHours(); return h < 12 ? 'Bom dia,' : h < 18 ? 'Boa tarde,' : 'Boa noite,'; }
 function aplicarTema(){ const t = S.perfil.tema; if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); else if (S.perfil.temaAplicado) document.documentElement.removeAttribute('data-theme'); S.perfil.temaAplicado = t; }
 
@@ -1513,6 +1575,7 @@ function bind(){
   A.querySelectorAll('[data-feito]').forEach((b) => b.onclick = () => { const a = S.agenda.find((x) => x.id === b.dataset.feito); a.feito = !a.feito; a.upd = Date.now(); save(); });
   A.querySelectorAll('[data-edit-lanc]').forEach((b) => b.onclick = () => formLanc(S.lancamentos.find((x) => x.id === b.dataset.editLanc)));
   A.querySelectorAll('[data-edit-conta]').forEach((b) => b.onclick = () => formConta(S.contas.find((x) => x.id === b.dataset.editConta)));
+  A.querySelectorAll('[data-pagparc]').forEach((b) => b.onclick = (e) => { e.stopPropagation(); const p = S.parcelados.find((x) => x.id === b.dataset.pagparc); const ym = b.dataset.ym; p.pagos = p.pagos || {}; p.pagos[ym] = !p.pagos[ym]; p.upd = Date.now(); save(); toast(p.pagos[ym] ? '✅ Parcela de ' + p.desc + ' paga' : 'Parcela marcada como não paga'); });
   A.querySelectorAll('[data-pagfat]').forEach((b) => b.onclick = (e) => { e.stopPropagation(); formPagarFatura(b.dataset.pagfat, b.dataset.ym); });
   A.querySelectorAll('[data-cartao]').forEach((b) => b.onclick = () => go('cartoes'));
   A.querySelectorAll('[data-edit-cartao]').forEach((b) => b.onclick = () => formCartao(cartaoDe(b.dataset.editCartao)));
@@ -1536,7 +1599,10 @@ function bind(){
   const tgOff = $('#tg-off'); if (tgOff) tgOff.onclick = () => confirmar('Desconectar o Telegram? Você para de receber lembretes por lá.', async () => { try { await api('/api/telegram/desligar', {}); conta.telegram = false; render(); toast('Telegram desconectado'); } catch(e){ toast(e.message); } });
   const ab = $('#adm-busca'); if (ab) ab.oninput = () => { view.admBusca = ab.value; const pos = ab.selectionStart; render(); const n = $('#adm-busca'); n.focus(); n.setSelectionRange(pos, pos); };
   const abk = $('#adm-bk'); if (abk) abk.onclick = async () => { try { const j = await api('/api/admin/backup'); baixarArquivo('sonhai-backup-geral-' + hojeISO() + '.json', JSON.stringify(j)); toast('⬇️ Backup geral baixado'); } catch(e){ toast(e.message); } };
-  A.querySelectorAll('[data-bloq]').forEach((b) => b.onclick = () => { const u = view.adm.usuarios.find((x) => x.k === b.dataset.bloq); confirmar((u.bloqueado ? 'Liberar' : 'Bloquear') + ' o acesso de ' + (u.nome || u.fone) + '?', async () => { try { await api('/api/admin/bloquear', { k: u.k, bloquear: !u.bloqueado }); view.adm = null; render(); } catch(e){ toast(e.message); } }); });
+  A.querySelectorAll('[data-adm]').forEach((b) => b.onclick = () => formUsuarioAdm(view.adm.usuarios.find((x) => x.k === b.dataset.adm)));
+  A.querySelectorAll('[data-afil]').forEach((b) => b.onclick = () => { view.admFiltro = b.dataset.afil; render(); });
+  const anv = $('#adm-novo'); if (anv) anv.onclick = formNovoAcesso;
+  const acad = $('#adm-cad'); if (acad) acad.onchange = async () => { try { await api('/api/admin/config', { cadastroAberto: acad.checked }); view.adm.config.cadastroAberto = acad.checked; toast(acad.checked ? 'Cadastro aberto (7 dias grátis)' : 'Cadastro fechado: só com seu link'); } catch(e){ toast(e.message); } };
   const cs = $('#ct-senha'); if (cs) cs.onclick = () => formSenha(!conta.temSenha);
   const cx = $('#ct-sair'); if (cx) cx.onclick = () => confirmar('Sair da sua conta neste aparelho?', () => sair(false));
   const ctd = $('#ct-todos'); if (ctd) ctd.onclick = () => confirmar('Sair da conta em todos os aparelhos (celular, computador…)?', () => sair(true));
@@ -1765,8 +1831,8 @@ function telaEntrar(modo){
   const tit = { entrar: 'Que bom te ver de novo!', criar: 'Crie sua conta grátis', reset: 'Crie uma senha nova' }[modo];
   let corpo = '';
   if (modo === 'reset') corpo = campoSenha('ln-s', 'Nova senha (mín. 6 caracteres)', 'new-password') + campoSenha('ln-s2', 'Repita a nova senha', 'new-password');
-  else corpo = (modo === 'criar' ? '<input id="ln-n" placeholder="Seu nome ou da família" autocomplete="name">' : '') + '<input id="ln-f" inputmode="tel" placeholder="Seu WhatsApp com DDD" autocomplete="tel">' + campoSenha('ln-s', modo === 'criar' ? 'Crie uma senha (mín. 6 caracteres)' : 'Sua senha', modo === 'criar' ? 'new-password' : 'current-password') + (modo === 'criar' ? campoSenha('ln-s2', 'Repita a senha', 'new-password') : '');
-  L.innerHTML = '<div class="ob" role="dialog" aria-modal="true"><form class="box" id="ln-form" novalidate><span class="logo" style="width:64px;height:64px;border-radius:20px;background:var(--sun);display:grid;place-items:center">' + LOGO.replace(/22/g, '38') + '</span><h1>Sonhaí</h1><p>' + tit + ' 💙</p>' + (modo !== 'reset' ? '<div class="seg" style="background:rgba(255,255,255,.14)"><button type="button" data-m="entrar" class="' + (modo === 'entrar' ? 'on' : '') + '" style="color:inherit">Entrar</button><button type="button" data-m="criar" class="' + (modo === 'criar' ? 'on' : '') + '" style="color:inherit">Criar conta</button></div>' : '') + corpo + '<div id="ln-erro" role="alert" style="background:#FFE9E5;color:#B42318;border-radius:12px;padding:10px 12px;font-weight:700" hidden></div><button class="btn sun block" type="submit" style="font-size:18px" id="ln-ok">' + ({ entrar: 'Entrar', criar: 'Criar minha conta ✨', reset: 'Salvar nova senha' })[modo] + '</button>' + (modo === 'entrar' ? '<button type="button" class="btn block" id="ln-esq" style="background:transparent;color:inherit;text-decoration:underline">Esqueci minha senha</button>' : '') + '<p style="font-size:13px;opacity:.8">🔒 Sua senha é guardada criptografada. Seus dados são só seus.</p></form></div>';
+  else corpo = (modo === 'criar' ? '<input id="ln-n" placeholder="Seu nome ou da família" autocomplete="name"><input id="ln-f" inputmode="tel" placeholder="Seu WhatsApp com DDD" autocomplete="tel"><input id="ln-e" type="email" inputmode="email" placeholder="Seu e-mail" autocomplete="email">' : '<input id="ln-f" placeholder="WhatsApp com DDD ou e-mail" autocomplete="username" value="' + esc(infoAcesso ? infoAcesso.fone.replace(/^55/, '') : '') + '">') + campoSenha('ln-s', modo === 'criar' ? 'Crie uma senha (mín. 6 caracteres)' : 'Sua senha', modo === 'criar' ? 'new-password' : 'current-password') + (modo === 'criar' ? campoSenha('ln-s2', 'Repita a senha', 'new-password') : '');
+  L.innerHTML = '<div class="ob" role="dialog" aria-modal="true"><form class="box" id="ln-form" novalidate><span class="logo" style="width:64px;height:64px;border-radius:20px;background:var(--sun);display:grid;place-items:center">' + LOGO.replace(/22/g, '38') + '</span><h1>Sonhaí</h1><p>' + tit + ' 💙</p>' + (infoAcesso && modo === 'entrar' ? '<div style="background:rgba(255,255,255,.95);color:#13233A;border-radius:14px;padding:12px;font-weight:600">🎉 Olá, <b>' + esc(infoAcesso.nome) + '</b>! Seu acesso está pronto.<br>📅 Plano <b>' + esc(infoAcesso.plano) + '</b>' + (infoAcesso.validade ? ' até <b>' + C.dataBR(infoAcesso.validade) + '</b>' : '') + '.<br>🔑 Entre com a <b>senha inicial</b> que você recebeu. Depois você cria a sua.</div>' : '') + (modo !== 'reset' && cfg.cadastroAberto !== false ? '<div class="seg" style="background:rgba(255,255,255,.14)"><button type="button" data-m="entrar" class="' + (modo === 'entrar' ? 'on' : '') + '" style="color:inherit">Entrar</button><button type="button" data-m="criar" class="' + (modo === 'criar' ? 'on' : '') + '" style="color:inherit">Criar conta' + ' <small style="font-weight:600;opacity:.8">(7 dias grátis)</small></button></div>' : '') + corpo + '<div id="ln-erro" role="alert" style="background:#FFE9E5;color:#B42318;border-radius:12px;padding:10px 12px;font-weight:700" hidden></div><button class="btn sun block" type="submit" style="font-size:18px" id="ln-ok">' + ({ entrar: 'Entrar', criar: 'Criar minha conta ✨', reset: 'Salvar nova senha' })[modo] + '</button>' + (modo === 'entrar' ? '<button type="button" class="btn block" id="ln-esq" style="background:transparent;color:inherit;text-decoration:underline">Esqueci minha senha</button>' : '') + botaoInstalar('background:rgba(255,255,255,.14);color:inherit') + '<p style="font-size:13px;opacity:.8">🔒 Sua senha é guardada criptografada. Seus dados são só seus.</p></form></div>';
   L.querySelectorAll('[data-m]').forEach((b) => b.onclick = () => telaEntrar(b.dataset.m));
   L.querySelectorAll('[data-ver]').forEach((b) => b.onclick = () => { const i = $('#' + b.dataset.ver); i.type = i.type === 'password' ? 'text' : 'password'; });
   const erro = (m) => { const e = $('#ln-erro'); e.textContent = m; e.hidden = !m; };
@@ -1779,7 +1845,7 @@ function telaEntrar(modo){
     try {
       let j;
       if (modo === 'reset') j = await api('/api/redefinir', { codigo: codReset, senha: sn });
-      else if (modo === 'criar') j = await api('/api/cadastro', { nome: $('#ln-n').value, fone: $('#ln-f').value, senha: sn, estado: S.demo ? null : S });
+      else if (modo === 'criar') j = await api('/api/cadastro', { nome: $('#ln-n').value, fone: $('#ln-f').value, email: $('#ln-e').value, senha: sn, estado: S.demo ? null : S });
       else j = await api('/api/login', { fone: $('#ln-f').value, senha: sn });
       token = j.token; codReset = ''; try { localStorage.setItem('cc-token', token); } catch(x){}
       if (modo !== 'criar') { S = C.estadoVazio(); store.set(S); }
@@ -1794,18 +1860,25 @@ async function iniciarConta(primeira){
   if (primeira) { setInterval(pull, 30000); document.addEventListener('visibilitychange', () => { if (!document.hidden) pull(); }); }
   render();
   if (!conta.temSenha) formSenha(true);
+  else if (conta.trocarSenha) formSenha(false, true);
 }
-function formSenha(criar){
-  sheet('<h3>🔐 ' + (criar ? 'Crie sua senha' : 'Trocar senha') + '</h3>' + (criar ? '<p class="sub">Assim você entra no Sonhaí em qualquer aparelho com seu WhatsApp e senha.</p>' : '') + '<form id="fsn">' + (criar ? '' : '<div class="field"><label for="sn-a">Senha atual</label><input id="sn-a" type="password" autocomplete="current-password"></div>') + '<div class="field"><label for="sn-n">Nova senha</label><input id="sn-n" type="password" autocomplete="new-password" placeholder="mín. 6 caracteres"></div><div class="field"><label for="sn-n2">Repita a nova senha</label><input id="sn-n2" type="password" autocomplete="new-password"></div><div class="note" id="sn-e" hidden style="color:var(--bad)"></div><button class="btn pri block" type="submit">Salvar senha</button></form>', () => {
-    $('#fsn').onsubmit = async (e) => { e.preventDefault(); const er = $('#sn-e'); er.hidden = true; if ($('#sn-n').value !== $('#sn-n2').value) { er.textContent = 'As senhas não são iguais.'; er.hidden = false; return; } try { await api('/api/senha', { atual: $('#sn-a') ? $('#sn-a').value : '', nova: $('#sn-n').value }); conta.temSenha = true; fechar(); toast('🔐 Senha salva!'); } catch(x){ er.textContent = x.message; er.hidden = false; } };
-  });
+function formSenha(criar, obrigatoria){
+  sheet('<h3>🔐 ' + (criar ? 'Crie sua senha' : obrigatoria ? 'Crie sua senha pessoal' : 'Trocar senha') + '</h3>' + (criar ? '<p class="sub">Assim você entra no Sonhaí em qualquer aparelho com seu WhatsApp e senha.</p>' : obrigatoria ? '<p class="sub">Por segurança, troque a senha inicial que você recebeu por uma só sua.</p>' : '') + '<form id="fsn">' + (criar ? '' : '<div class="field"><label for="sn-a">Senha atual</label><input id="sn-a" type="password" autocomplete="current-password"></div>') + '<div class="field"><label for="sn-n">Nova senha</label><input id="sn-n" type="password" autocomplete="new-password" placeholder="mín. 6 caracteres"></div><div class="field"><label for="sn-n2">Repita a nova senha</label><input id="sn-n2" type="password" autocomplete="new-password"></div><div class="note" id="sn-e" hidden style="color:var(--bad)"></div><button class="btn pri block" type="submit">Salvar senha</button></form>', () => {
+    if (obrigatoria && $('#sn-a')) { $('#sn-a').closest('.field').querySelector('label').textContent = 'Senha inicial (a que você recebeu)'; }
+    $('#fsn').onsubmit = async (e) => { e.preventDefault(); const er = $('#sn-e'); er.hidden = true; if ($('#sn-n').value !== $('#sn-n2').value) { er.textContent = 'As senhas não são iguais.'; er.hidden = false; return; } try { await api('/api/senha', { atual: $('#sn-a') ? $('#sn-a').value : '', nova: $('#sn-n').value }); conta.temSenha = true; conta.trocarSenha = false; fechar(); toast('🔐 Senha salva!'); } catch(x){ er.textContent = x.message; er.hidden = false; } };
+  }, { fixa: !!(obrigatoria || criar) });
 }
 async function sair(todos){ try { await api('/api/sair', { todos: !!todos }); } catch(e){} sairLocal(); }
 function sairLocal(){ token = ''; conta = null; try { localStorage.removeItem('cc-token'); localStorage.removeItem(KEY); } catch(e){} mem = null; S = C.estadoVazio(); render(); telaEntrar('entrar'); }
 function blocoConta(){
   if (!SERVER) return '<section class="card"><h2 style="margin-bottom:8px">🔐 Minha conta</h2><div class="note">Nesta demonstração os dados ficam só neste aparelho. No app publicado você entra com <b>WhatsApp + senha</b> e seus dados ficam protegidos e sincronizados entre aparelhos.</div></section>';
   if (!conta) return '';
-  return '<section class="card"><h2 style="margin-bottom:8px">🔐 Minha conta</h2><div class="list"><div class="item"><span class="ico" style="background:var(--tile-in)">📱</span><span class="mid"><span class="ttl">+' + esc(conta.fone) + '</span><span class="meta">' + (conta.verificado ? 'WhatsApp confirmado ✓' : 'WhatsApp aguardando confirmação') + '</span></span></div></div><div class="btnrow" style="margin-top:8px"><button class="btn ghost" id="ct-senha">🔑 ' + (conta.temSenha ? 'Trocar senha' : 'Criar senha') + '</button><button class="btn ghost" id="ct-sair">🚪 Sair</button></div><button class="btn danger block" style="margin-top:8px" id="ct-todos">Sair de todos os aparelhos</button></section>';
+  return '<section class="card"><h2 style="margin-bottom:8px">🔐 Minha conta</h2><div class="list"><div class="item"><span class="ico" style="background:var(--tile-in)">📱</span><span class="mid"><span class="ttl">+' + esc(conta.fone) + '</span><span class="meta">' + (conta.verificado ? 'WhatsApp confirmado ✓' : 'WhatsApp aguardando confirmação') + '</span></span></div>' + (conta.email ? '<div class="item"><span class="ico" style="background:var(--tile-bal)">✉️</span><span class="mid"><span class="ttl">' + esc(conta.email) + '</span><span class="meta">E-mail de acesso</span></span></div>' : '') + '<div class="item"><span class="ico" style="background:var(--tile-dream)">📅</span><span class="mid"><span class="ttl">Plano ' + esc(conta.planoNome || 'Ilimitado') + '</span><span class="meta">' + (conta.validade ? 'Válido até ' + C.dataBR(conta.validade) + ' (' + conta.dias + ' dias)' : 'Sem data de vencimento') + '</span></span></div></div>' + botaoInstalar('background:var(--surface-2);margin-top:8px') + '<div class="btnrow" style="margin-top:8px"><button class="btn ghost" id="ct-senha">🔑 ' + (conta.temSenha ? 'Trocar senha' : 'Criar senha') + '</button><button class="btn ghost" id="ct-sair">🚪 Sair</button></div><button class="btn danger block" style="margin-top:8px" id="ct-todos">Sair de todos os aparelhos</button></section>';
+}
+function avisoPlano(){
+  if (!conta || conta.dias == null || conta.dias > 5) return '';
+  const sup = (conta.suporte || '').replace(/\D/g, '');
+  return '<section class="card" style="background:var(--tile-out)"><h2 style="font-size:18px">⏳ Seu acesso vence ' + (conta.dias <= 0 ? 'hoje' : 'em ' + conta.dias + (conta.dias === 1 ? ' dia' : ' dias')) + '</h2><p style="margin:8px 0">Plano ' + esc(conta.planoNome) + ' até ' + C.dataBR(conta.validade) + '. Renove para continuar usando o Sonhaí sem interrupção. Seus dados ficam guardados.</p>' + (sup ? '<a class="btn sun block" href="https://wa.me/' + sup + '?text=' + encodeURIComponent('Olá! Quero renovar meu acesso ao Sonhaí.') + '" target="_blank" rel="noopener">💬 Renovar pelo WhatsApp</a>' : '') + '</section>';
 }
 function avisoVerificar(){
   if (!conta || conta.verificado) return '';
@@ -1815,10 +1888,16 @@ function avisoVerificar(){
 
 // ------------------------------------------------------------ início
 const h0 = (location.hash || '').slice(1); if (TELAS[h0]) view.tela = h0;
-window.addEventListener('popstate', () => { profundidade = Math.max(0, profundidade - 1); const x = location.hash.slice(1) || 'inicio'; if (TELAS[x] && x !== view.tela) { fechar(); view.tela = x; render(); scrollTo(0, 0); } });
+window.addEventListener('popstate', () => { if (ignorarPop) { ignorarPop = false; return; } if (sheetAberta) { if (sheetFixa) { try { history.pushState({ s: 1 }, '', location.hash); } catch(e){} return; } fechar(true); return; } profundidade = Math.max(0, profundidade - 1); const x = location.hash.slice(1) || 'inicio'; if (TELAS[x] && x !== view.tela) { fechar(); view.tela = x; render(); scrollTo(0, 0); } });
 window.addEventListener('hashchange', () => { const x = location.hash.slice(1); if (TELAS[x] && x !== view.tela) { view.tela = x; render(); } });
 render();
-if (SERVER) { fetch('/api/config').then((r) => r.json()).then((j) => { cfg = j; render(); }).catch(() => {}); if (token) iniciarConta(true); else telaEntrar(); }
+if (SERVER) {
+  (async () => {
+    try { cfg = await (await fetch('/api/config')).json(); } catch(e){}
+    if (codAcesso) { try { infoAcesso = await (await fetch('/api/acesso?c=' + encodeURIComponent(codAcesso))).json(); if (infoAcesso.erro) { toast(infoAcesso.erro); infoAcesso = null; } else { token = ''; try { localStorage.removeItem('cc-token'); } catch(e){} } } catch(e){} }
+    if (token) iniciarConta(true); else telaEntrar('entrar');
+  })();
+}
 if (SERVER && 'serviceWorker' in navigator) { try { navigator.serviceWorker.register('/sw.js').catch(() => {}); } catch(e){} }
 })();
 </script>

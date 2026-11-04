@@ -34,7 +34,7 @@
     { nome: 'Presentes/Doações', emoji: '🎁', cor: '#E0697A', chaves: ['presente', 'doacao', 'dizimo', 'oferta', 'aniversario', 'vaquinha'] },
     { nome: 'Outros', emoji: '✨', cor: '#9AA3AF', chaves: [] }
   ];
-  const TIPOS_ENTRADA = ['Salário', 'Adiantamento', 'Bônus/PLR', 'Comissão', '13º salário', 'Aposentadoria', 'Aluguel recebido', 'Venda', 'Pix recebido', 'Resgate de sonho', 'Outra renda'];
+  const TIPOS_ENTRADA = ['Salário', 'Adiantamento', 'Bônus/PLR', 'Comissão', '13º salário', 'Aposentadoria', 'Aluguel recebido', 'Venda', 'Pix recebido', 'Freela', 'Reembolso', 'Rendimentos', 'Resgate de sonho', 'Outra renda'];
 
   // ------------------------------------------------------------------ helpers
   const sem = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
@@ -192,7 +192,7 @@
     return melhor || 'Outros';
   }
 
-  const VERBOS = /\b(gastei|paguei|comprei|almocei|jantei|abasteci|coloquei|botei|lancei|lanca|lancar|lance|anota|anotar|anote|registra|registrar|registre|adiciona|adicionar|adicione|foi|deu|custou|tive um gasto de|tive gasto de|gasto de|gasto|compra de|compra|fiz|fui|no valor de|valor de|reais|real|conto|contos|pila|r\$|com|de|do|da|no|na|em|um|uma|o|a|os|as|e|pra|para|pro|hoje|ontem|anteontem|agora|cartao|credito|debito|pix|dinheiro|no cartao|eu|me|meu|minha)\b/g;
+  const VERBOS = /\b(gastei|gastamos|gastar|gaste|despesa|despesas|saida|torrei|desembolsei|comprar|compramos|pagamos|criar|cria|crie|novo|nova|lancamento|registro|incluir|inclui|inclua|bota|botar|gastei|paguei|comprei|almocei|jantei|abasteci|coloquei|botei|lancei|lanca|lancar|lance|anota|anotar|anote|registra|registrar|registre|adiciona|adicionar|adicione|foi|deu|custou|tive um gasto de|tive gasto de|gasto de|gasto|compra de|compra|fiz|fui|no valor de|valor de|reais|real|conto|contos|pila|r\$|com|de|do|da|no|na|em|um|uma|o|a|os|as|e|pra|para|pro|hoje|ontem|anteontem|agora|cartao|credito|debito|pix|dinheiro|no cartao|eu|me|meu|minha)\b/g;
   function limparDescricao(original, remover) {
     let t = ' ' + extensoParaNumero(sem(original)) + ' ';
     const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -377,10 +377,14 @@
       return { tipo: 'sonho', valor: val.valor, termo: generico ? '' : restoOrig.replace(/\b(cofrinho|caixinha)\b/gi, '').trim(), investir: /\binvest|aplic/.test(t), data: dt ? dt.data : iso(hoje) };
     }
 
-    // ENTRADA
-    if (/\b(recebi|ganhei|entrou|caiu|recebimento|me pagaram|vendi|salario caiu|pingou)\b/.test(t) && val) {
-      let tipoE = /salario/.test(t) ? 'Salário' : /adiantamento|vale\b/.test(t) ? 'Adiantamento' : /13|decimo/.test(t) ? '13º salário' : /bonus|plr/.test(t) ? 'Bônus/PLR' : /comissao/.test(t) ? 'Comissão' : /aluguel/.test(t) ? 'Aluguel recebido' : /vendi|venda/.test(t) ? 'Venda' : /pix/.test(t) ? 'Pix recebido' : /aposentadoria|inss/.test(t) ? 'Aposentadoria' : 'Outra renda';
-      const desc = limparDescricao(original, [val.trecho, dt && dt.trecho, 'recebi', 'ganhei', 'entrou', 'caiu', 'me pagaram', 'pingou']) || tipoE;
+    // ENTRADA (renda) — todas as formas comuns de dizer que entrou dinheiro
+    const fortesEntrada = /\b(recebi|recebemos|receber|recebido|recebida|ganhei|ganhamos|entrou|entrada|entradas|renda|rendas|receita|receitas|caiu|cairam|pingou|me pagaram|pagaram|depositaram|transferiram pra mim|me mandaram|recebimento|faturei|lucrei|lucro)\b/;
+    const fracosEntrada = /\b(salario|adiantamento|vale|13o?|decimo terceiro|bonus|plr|comissao|aposentadoria|pensao|aluguel recebido|reembolso|restituicao|cashback|freela|freelance|venda|vendi|rendimento|dividendos?|pro labore)\b/;
+    const verbosGasto = /\b(gastei|gastamos|gasto|gastar|comprei|compramos|compra|comprar|paguei|pagamos|pagar|despesa|saida|torrei|desembolsei|debitou|saiu)\b/;
+    const ehEntrada = val && (fortesEntrada.test(t) && !/\b(receita medica|receita de bolo)\b/.test(t) || (fracosEntrada.test(t) && !verbosGasto.test(t)));
+    if (ehEntrada && !(verbosGasto.test(t) && !fortesEntrada.test(t))) {
+      let tipoE = /salario/.test(t) ? 'Salário' : /adiantamento|vale\b/.test(t) ? 'Adiantamento' : /13|decimo/.test(t) ? '13º salário' : /bonus|plr/.test(t) ? 'Bônus/PLR' : /comissao/.test(t) ? 'Comissão' : /aluguel/.test(t) ? 'Aluguel recebido' : /vendi|venda/.test(t) ? 'Venda' : /reembolso|restituicao|cashback/.test(t) ? 'Reembolso' : /rendimento|dividendo/.test(t) ? 'Rendimentos' : /freela/.test(t) ? 'Freela' : /pix/.test(t) ? 'Pix recebido' : /aposentadoria|inss/.test(t) ? 'Aposentadoria' : 'Outra renda';
+      const desc = limparDescricao(original, [val.trecho, dt && dt.trecho, 'recebi', 'recebemos', 'receber', 'recebido', 'recebida', 'ganhei', 'ganhamos', 'entrou', 'entrada', 'renda', 'receita', 'caiu', 'me pagaram', 'pagaram', 'pingou', 'depositaram', 'criar', 'cria', 'crie', 'nova', 'novo', 'lançar', 'lança', 'lance', 'registrar', 'adicionar', 'adiciona', 'colocar', 'coloca', 'vendi', 'por', 'pela', 'pelo']) || tipoE;
       return { tipo: 'entrada', valor: val.valor, desc, cat: tipoE, data: dt ? dt.data : iso(hoje) };
     }
 
@@ -711,7 +715,7 @@
       pctOrcamento: orcamento > 0 ? gastoTotal / orcamento : 0, pctGuardado: entradas > 0 ? guardado / entradas : 0,
       maiorCategoria: maior ? { nome: maior[0], valor: maior[1] } : null, anuaisMes, lancamentos: L,
       // dinheiro que já saiu de fato: gastos pagos (dinheiro, pix, débito), contas pagas, faturas pagas e o que foi guardado
-      jaSaiu: (() => { const g = L.filter((l) => l.tipo === 'gasto' && !l.ticket && !l.cartaoId && l.pagamento !== 'Cartão').reduce((a, b) => a + b.valor, 0); const fat = (estado.cartoes || []).reduce((a, c) => { const f = fatura(estado, c.id, ym); return a + (f ? f.pago : 0); }, 0); const parcSem = parcs.filter((x) => !x.p.cartaoId).reduce((a, b) => a + b.p.valor, 0); return g + fixasPagas + fat + parcSem + guardado; })()
+      jaSaiu: (() => { const g = L.filter((l) => l.tipo === 'gasto' && !l.ticket && !l.cartaoId && l.pagamento !== 'Cartão').reduce((a, b) => a + b.valor, 0); const fat = (estado.cartoes || []).reduce((a, c) => { const f = fatura(estado, c.id, ym); return a + (f ? f.pago : 0); }, 0); const parcSem = parcs.filter((x) => !x.p.cartaoId && x.p.pagos && x.p.pagos[ym]).reduce((a, b) => a + b.p.valor, 0); return g + fixasPagas + fat + parcSem + guardado; })()
     };
   }
   function resumoSimples(estado, ym) {
