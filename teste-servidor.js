@@ -41,12 +41,12 @@ const contaHoje = (nome) => ({ id: 'c-' + nome, nome, cat: 'Contas da Casa', val
 const pendurarConta = async (t, nome) => { const g = await req('GET', '/api/estado', null, t); const e = g.j.estado; e.contas.push(contaHoje(nome)); e.perfil.lembreteHora = '00:00'; e.perfilUpd = Date.now(); await req('PUT', '/api/estado', { estado: e }, t); };
 const telegram = (msg) => fetch(B + '/telegram', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-telegram-bot-api-secret-token': TG_SEG }, body: JSON.stringify({ message: msg }) });
 const conectarTelegram = async (t, chatId) => { const j = (await req('POST', '/api/telegram/link', {}, t)).j; await telegram({ chat: { id: chatId }, text: '/start ' + j.link.split('start=')[1] }); await espera(200); };
-const zapEntra = async (de, texto) => { const corpo = JSON.stringify({ entry: [{ changes: [{ value: { messages: [{ from: de, type: 'text', text: { body: texto } }] } }] }] }); const sig = 'sha256=' + crypto.createHmac('sha256', SEG).update(corpo).digest('hex'); await fetch(B + '/webhook', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-hub-signature-256': sig }, body: corpo }); await espera(250); };
+const zapEntra = async (de, texto, id) => { const corpo = JSON.stringify({ entry: [{ changes: [{ value: { messages: [{ id, from: de, type: 'text', text: { body: texto } }] } }] }] }); const sig = 'sha256=' + crypto.createHmac('sha256', SEG).update(corpo).digest('hex'); await fetch(B + '/webhook', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-hub-signature-256': sig }, body: corpo }); await espera(250); };
 
 (async () => {
   await new Promise((r) => simulador.listen(3198, r));
   // ================================================================ WhatsApp desligado
-  await ligar({ BREVO_API_KEY: 'k', EMAIL_REMETENTE: 'oi@sonhai.app', EMPRESA_NOME: 'Sonhaí <Teste>', EMPRESA_DOC: 'CNPJ 00.000.000/0001-00', CONTATO_EMAIL: 'privacidade@sonhai.app', DIAS_RETENCAO: '90' });
+  await ligar({ BREVO_API_KEY: 'k', EMAIL_REMETENTE: 'oi@sonhai.app', EMPRESA_NOME: 'Sonhaí <Teste>', EMPRESA_DOC: 'CNPJ 00.000.000/0001-00', CONTATO_EMAIL: 'privacidade@sonhai.app', DIAS_RETENCAO: '90', SUPORTE_WHATSAPP: '16955550000' });
   const adm = await cadastro('Master', '16999990001', 'm@x.com');
   const T = adm.j.token;
   const ana = await cadastro('Ana', '16911110000', 'ana@x.com', { aceite: true });
@@ -102,6 +102,13 @@ const zapEntra = async (de, texto) => { const corpo = JSON.stringify({ entry: [{
     const v = (await req('GET', '/api/estado', null, ana.j.token)).j.estado; confere('sincronização guarda ticket e crédito', [v.tickets.length, v.recargas.length, v.lancamentos.filter((l) => l.ticketId).length], [1, 1, 1]);
     const c2 = await req('GET', '/api/meus-dados?formato=csv', null, ana.j.token); confere('CSV traz crédito e compra do ticket', [c2.tx.includes('2026-11-04;Crédito no Ticket;Crédito;;800;Ticket'), c2.tx.includes('2026-11-04;Gasto;Feira;Mercado;50;Ticket')], [true, true]); }
   confere('sem login não exporta', (await req('GET', '/api/meus-dados')).s, 401);
+  // estado forjado não derruba o painel nem apaga o nome
+  { const tf = (await cadastro('Forja', '16912120000', 'forja@x.com', { aceite: true })).j.token;
+    const g = (await req('GET', '/api/estado', null, tf)).j.estado; const nome = g.perfil.nome;
+    const r = await req('PUT', '/api/estado', { estado: Object.assign({}, g, { perfil: null, perfilUpd: 9e15 }) }, tf);
+    confere('estado forjado: conta e painel seguem de pé', [r.s, (await req('GET', '/api/admin/usuarios', null, T)).s, (await req('GET', '/api/eu', null, tf)).s, (await req('GET', '/api/estado', null, tf)).j.estado.perfil.nome], [200, 200, 200, nome]);
+    confere('estado que não é objeto é recusado', (await req('PUT', '/api/estado', { estado: [1] }, tf)).s, 400);
+    const cfg0 = (await req('GET', '/api/config')).j; confere('config público mostra o suporte, nunca o master', [cfg0.suporte, /16999990001/.test(JSON.stringify(cfg0))], ['5516955550000', false]); }
 
   const L = (await req('GET', '/api/admin/usuarios', null, T)).j;
   confere('painel sem pendências quando tudo configurado', L.pendencias, []);
@@ -122,6 +129,13 @@ const zapEntra = async (de, texto) => { const corpo = JSON.stringify({ entry: [{
   // ticket pelo canal: crédito, compra, saldo e resumo
   zerar(); await telegram({ chat: { id: 777 }, text: 'caiu 800 no ticket' }); await espera(150); await telegram({ chat: { id: 777 }, text: 'gastei 50 no mercado no ticket' }); await espera(150); await telegram({ chat: { id: 777 }, text: 'saldo do ticket' }); await espera(150);
   { const tx = saida.tg.map((m) => m.text || ''); confere('Telegram: crédito, compra e saldo', [/Saldo: R\$\s800,00/.test(tx[0] || ''), /Saldo: R\$\s750,00/.test(tx[1] || ''), /Saldo: R\$\s750,00/.test(tx[2] || '')], [true, true, true]); }
+  // mesma mensagem entregue duas vezes não lança em dobro
+  { const antes = (await req('GET', '/api/admin/usuarios', null, T)).j.usuarios.find((x) => x.telegram).lancamentos;
+    await telegram({ chat: { id: 777 }, text: 'gastei 20 na padaria', _id: 1 }); await espera(150);
+    const corpo = JSON.stringify({ update_id: 9001, message: { chat: { id: 777 }, text: 'gastei 21 na padaria' } });
+    const manda = () => fetch(B + '/telegram', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-telegram-bot-api-secret-token': TG_SEG }, body: corpo });
+    await manda(); await manda(); await espera(200);
+    confere('entrega repetida do Telegram lança uma vez', (await req('GET', '/api/admin/usuarios', null, T)).j.usuarios.find((x) => x.telegram).lancamentos, antes + 2); }
   // apagar pelo Telegram com o acesso vencido
   await req('POST', '/api/admin/renovar', { k: kBia, validade: d(-5) }, T);
   zerar(); await telegram({ chat: { id: 777 }, text: 'apagar meus dados' }); await espera(200);
@@ -147,7 +161,7 @@ const zapEntra = async (de, texto) => { const corpo = JSON.stringify({ entry: [{
     confere('registra a limpeza sem dados da pessoa', /retenção de 90 dias/.test(JSON.stringify(L3.j.auditoria)), true);
     zerar(); await desligar(); await ligar({ BREVO_API_KEY: 'k', EMAIL_REMETENTE: 'oi@sonhai.app' }); await ciclo();
     confere('não repete o aviso', saida.email.length, 0);
-    confere('painel lista pendências', (await req('GET', '/api/admin/usuarios', null, T)).j.pendencias.length, 3);
+    confere('painel lista pendências', (await req('GET', '/api/admin/usuarios', null, T)).j.pendencias.length, 4);
   } else console.log('(retenção só roda depois das 4h)');
 
   // cadastro com Telegram para a próxima etapa
@@ -170,6 +184,14 @@ const zapEntra = async (de, texto) => { const corpo = JSON.stringify({ entry: [{
   let lista = (await req('GET', '/api/admin/usuarios', null, T)).j.usuarios; let novo = lista.find((u) => u.fone.endsWith('88880000'));
   confere('oi vira teste de 7 dias', [novo.plano, !!novo.validade, novo.dias], ['gratis', true, 7]);
   confere('boas-vindas com Termos', saida.zap.some((m) => m.text && /termos\.html/.test(m.text.body)), true);
+  { const txt = saida.zap.map((x) => (x.text || {}).body || '').join(' '); const m = txt.match(/\?e=([\w-]+)/);
+    confere('link de entrada não leva a sessão no texto', [!!m, /\?t=/.test(txt)], [true, false]);
+    const r1 = await req('POST', '/api/entrar', { codigo: m[1] }); const r2 = await req('POST', '/api/entrar', { codigo: m[1] });
+    confere('link de entrada vale uma vez', [r1.s, !!r1.j.token, r2.s], [200, true, 400]);
+    const est = (await req('GET', '/api/estado', null, r1.j.token)).j.estado;
+    confere('quem chega pelo WhatsApp vê o guia e o link não fica salvo', [est.perfil.guiaTour, (est.chat || []).some((c) => /\?e=/.test(c.txt))], [true, false]);
+    await zapEntra('5516988880000', 'gastei 15 na padaria', 'wamid.1'); await zapEntra('5516988880000', 'gastei 15 na padaria', 'wamid.1');
+    confere('entrega repetida do WhatsApp lança uma vez', (await req('GET', '/api/estado', null, r1.j.token)).j.estado.lancamentos.length, 1); }
   await req('POST', '/api/admin/config', { cadastroAberto: false }, T);
   zerar(); await zapEntra('5516989990000', 'oi');
   lista = (await req('GET', '/api/admin/usuarios', null, T)).j.usuarios;

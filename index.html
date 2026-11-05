@@ -571,10 +571,16 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
         const acao = { tipo: 'sonho', valor: p.valor, data: p.data, investir: p.investir, sonhoId: alvo ? alvo.id : undefined, termo: alvo ? '' : String(texto).trim().replace(/^(novo|criar|cria|sonho|um sonho)\s+/i, '') };
         if (!alvo && n) return { ok: false, msg: 'Não achei esse número. Responda de novo, por favor. 🙂', pergunta: p };
         return aplicar(estado, acao, opts);
+      } else if (p.tipo === 'valor' && extrairValor(extensoParaNumero(t))) {
+        delete estado.pendente;
+        return conversar(estado, p.texto + ' ' + texto, opts);
       }
     }
     delete estado.pendente;
-    const acao = interpretar(texto, { hoje, categorias: estado.categorias, sonhos: estado.sonhos, cartoes: estado.cartoes, tickets: estado.tickets });
+    const ctx = { hoje, categorias: estado.categorias, sonhos: estado.sonhos, cartoes: estado.cartoes, tickets: estado.tickets };
+    const varios = separarLancamentos(texto, ctx);
+    if (varios) { const rv = lancarVarios(estado, varios, opts); rv.acao = { tipo: 'varios' }; return rv; }
+    const acao = interpretar(texto, ctx);
     if (acao.tipo === 'excluir') {
       const alvo = acharExclusao(estado, acao);
       if (!alvo.item) return { ok: false, msg: alvo.msg, acao };
@@ -586,6 +592,60 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
     if (r.pergunta) estado.pendente = r.pergunta;
     r.acao = acao;
     return r;
+  }
+
+  /** "gastei 50 no mercado e 30 na padaria" são dois gastos. Só separa com certeza; na dúvida, segue como uma frase. */
+  function separarLancamentos(texto, opts) {
+    const original = String(texto || '').trim();
+    const norm = extensoParaNumero(sem(original));
+    if (/\b\d{1,2}\s*(x|vezes|parcelas?)\b/.test(norm)) return null;
+    const base = norm === sem(original) ? original : norm; // mantém os acentos quando dá
+    let partes = base.split(/\s*[;,]\s+|\s+e\s+|\s+mais\s+|\s+depois\s+/i).map((x) => x.trim()).filter(Boolean);
+    if (partes.length < 2) partes = paresSemSeparador(base);
+    if (!partes || partes.length < 2 || partes.length > 5) return null;
+    const verbo = (base.match(/^\s*(?:eu\s+)?(gastei|gastamos|paguei|pagamos|comprei|compramos|recebi|recebemos|ganhei)\b/i) || [])[1];
+    const hoje = opts.hoje || new Date();
+    const dataGeral = extrairData(norm, hoje, 'passado');
+    const acoes = [];
+    for (const p of partes) {
+      const frase = verbo && !new RegExp('\\b' + sem(verbo) + '\\b').test(sem(p)) && !/\b(gastei|paguei|comprei|recebi|ganhei)\b/.test(sem(p)) ? verbo + ' ' + p : p;
+      const v = extrairValor(extensoParaNumero(sem(frase)));
+      if (!v || !(v.moeda || v.pts >= 0)) return null;
+      const a = interpretar(frase, opts);
+      if (a.tipo !== 'gasto' && a.tipo !== 'entrada') return null;
+      if (!a.desc || (a.tipo === 'gasto' && a.cat === 'Outros' && a.desc === 'Outros')) return null;
+      if (dataGeral && a.data === iso(hoje)) a.data = dataGeral.data;
+      acoes.push(a);
+    }
+    // "... e 30 na padaria no cartão Nubank": a forma de pagamento citada no fim vale para todos
+    const ult = acoes[acoes.length - 1];
+    if (ult.tipo === 'gasto' && (ult.cartao || ult.ticket || ult.pagamento)) for (const a of acoes) if (a.tipo === 'gasto' && !a.cartao && !a.ticket && !a.pagamento) { a.cartao = ult.cartao; a.ticket = ult.ticket; a.pagamento = ult.pagamento; if (ult.cartao || ult.ticket) a.paguei = false; }
+    return acoes;
+  }
+  /** "mercado 50 padaria 30": pares de nome e valor, sem verbo, vírgula ou "e". */
+  function paresSemSeparador(b) {
+    const par = '(?:[^\\d\\s]+\\s+){1,3}\\d+(?:[.,]\\d{1,2})?(?:\\s+reais)?';
+    if (!new RegExp('^' + par + '(?:\\s+' + par + ')+$', 'i').test(b)) return null;
+    const pares = b.match(new RegExp(par, 'gi')).map((x) => x.trim());
+    const tn = sem(b);
+    if (/^(gastei|gastamos|paguei|pagamos|comprei|compramos|abasteci)\b/.test(tn)) return null;
+    if (pares.some((p) => /\b(para|pra|por|de|com|em|dia|as)\b/.test(sem(p)) || UNIDADES.test(sem(p)))) return null;
+    return pares;
+  }
+  /** Lança tudo de uma vez; "desfazer" volta o conjunto. */
+  function lancarVarios(estado, acoes, opts) {
+    const rs = acoes.map((a) => aplicar(estado, a, opts));
+    const k = rs.filter((r) => r.podeDesfazer).length;
+    if (k > 1) {
+      const blocos = estado.desfazer.splice(-k);
+      const vistos = new Set(); const alterados = [];
+      for (const b of blocos) for (const x of b.alterados) { const c = x.col + ':' + x.item.id; if (!vistos.has(c)) { vistos.add(c); alterados.push(x); } }
+      estado.desfazer.push({ criados: blocos.flatMap((b) => b.criados), alterados, removidos: blocos.flatMap((b) => b.removidos), rotulo: acoes.length + ' lançamentos', em: Date.now() });
+    }
+    const linhas = acoes.map((a) => `• ${a.desc && a.desc !== a.cat ? a.desc : a.cat}: ${brl(a.valor)}${a.tipo === 'entrada' ? ' (entrada)' : ''}`);
+    const gastos = acoes.filter((a) => a.tipo === 'gasto');
+    const aviso = (rs[rs.length - 1].msg || '').split('\n').filter((l) => /orçamento/i.test(l)).pop();
+    return { ok: rs.every((r) => r.ok), colecao: 'lancamentos', podeDesfazer: k > 0, msg: `✅ Anotei ${acoes.length} lançamentos:\n${linhas.join('\n')}${gastos.length > 1 ? `\nTotal: ${brl(gastos.reduce((q, a) => q + a.valor, 0))}` : ''}${aviso ? '\n' + aviso : ''}` };
   }
 
   // ------------------------------------------------------------------ cartões
@@ -783,6 +843,16 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
     if (/\b(desfaz|desfazer|desfaca|volta o ultimo|cancela o ultimo|apaga o ultimo|exclui o ultimo|exclua o ultimo|remove o ultimo)\b/.test(t) && !/\d/.test(t)) return { tipo: 'desfazer' };
     const tk = detectarTicket(t, opts.tickets);
     if (tk && /\b(saldo|quanto|extrato|como esta|mostra|qual)\b/.test(t) && !(extrairValor(t) && (COMPRA_TICKET.test(t) || CREDITO_FORTE.test(t) || CREDITO_FRACO.test(t)))) return { tipo: 'ver_ticket', ticket: tk };
+    if (/^(muito )?(obrigad[oa]|brigad[oa]|valeu|vlw|show|beleza|blz|ok|okay|perfeito|otimo|legal|top|boa|entendi|combinado)\b/.test(t) && !extrairValor(t)) return { tipo: 'conversa', msg: 'Por nada! Estou aqui sempre que precisar. 💙' };
+    if (/^(tudo bem|tudo bom|td bem|como vai|como voce esta|e ai)\b/.test(t) && !extrairValor(t)) return { tipo: 'conversa', msg: 'Tudo ótimo por aqui! 💙 Me conta: gastou alguma coisa hoje?' };
+    if (!tk && /\bquanto (eu )?(ainda )?posso gastar\b/.test(t) && !extrairValor(t)) return { tipo: 'quanto_posso' };
+    if (!tk && /\b(maior gasto|gastei mais|mais gastei|gasto mais|mais gasto)\b/.test(t) && !extrairValor(t)) return { tipo: 'maior_gasto' };
+    const consulta = !tk && t.match(/\bquanto (?:eu )?(?:ja )?(?:gastei|gastamos|paguei)\s+(?:com|de|em|no|na|nos|nas)\s+(.+)$/);
+    if (consulta && !extrairValor(t)) {
+      const passado = /\bmes passado\b/.test(consulta[1]);
+      const termoC = consulta[1].replace(/\b(?:n?este|n?esse|no|em)?\s*mes(?:\s+passado)?\b|\bate agora\b|\bhoje\b|\bo\b|\ba\b|\bos\b|\bas\b|[?!.]/g, ' ').replace(/\s+/g, ' ').trim();
+      if (termoC) { const catC = adivinharCategoria(termoC, opts.categorias); return { tipo: 'consulta_gasto', termo: termoC, cat: catC === 'Outros' ? '' : catC, ym: somaMes(mesDe(iso(hoje)), passado ? -1 : 0) }; }
+    }
     if (!tk && /\b(quanto (eu )?(ja )?gastei|quanto (me )?(sobrou|sobra|resta)|quanto (eu )?(tenho|posso gastar)|resumo|saldo|como (estou|esta|to|ta)|balanco|extrato|meu mes)\b/.test(t)) return { tipo: 'resumo' };
     if (/\b(contas? (a|pra|para) (pagar|vencer)|o que vence|quais contas|contas da semana|contas pendentes|boletos)\b/.test(t) && !extrairValor(t)) return { tipo: 'contas_pendentes' };
     if (/\b(agenda|compromissos? (de )?hoje|meus compromissos|o que tenho hoje)\b/.test(t) && !/\b(marca|marcar|agenda[r]? (uma|um|o|a)|lembra)/.test(t)) return { tipo: 'agenda_hoje' };
@@ -844,7 +914,8 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
     // PLANO ou PERGUNTA: "vale a pena comprar uma TV de 2000" não é um gasto
     const quer = /\b(vale a pena|sera que|posso|devo|deveria|quero|queremos|queria|gostaria|pretendo|planejo|vou|vamos|preciso|pensando em|penso em|se eu)\b/.test(t);
     const verboPlano = /\b(compr\w*|gast\w*|pag\w*|guard\w*|junt\w*|invest\w*|poup\w*|econom\w*|troc\w*|viaj\w*|parcel\w*)\b/.test(t);
-    if (val && !fatoFeito.test(t) && !/\b(vence|vencimento|lembr\w*|agend\w*|boleto)\b/.test(t) && ((quer && verboPlano) || /\?\s*$/.test(original))) return { tipo: 'plano', texto: original };
+    const vaiPagar = /\b(tenho que|preciso|vou ter que) pagar\b/.test(t) && /\bdia\s+\d{1,2}\b/.test(t);
+    if (val && !fatoFeito.test(t) && !vaiPagar && !/\b(vence|vencimento|lembr\w*|agend\w*|boleto)\b/.test(t) && ((quer && verboPlano) || /\?\s*$/.test(original))) return { tipo: 'plano', texto: original };
 
     // TICKET: crédito sobe o saldo, compra desce. Sem verbo ("mercado 50 no ticket") é compra, como no resto do app.
     if (tk) {
@@ -860,7 +931,7 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
     }
 
     // SONHO (guardar / investir / cofrinho)
-    const verboGuardar = /\b(guard(ei|ar|e|a|amos)|junt(ei|ar|e|a)|poup(ei|ar|e|a)|economiz(ei|ar)|separ(ei|ar|e|a)|reserv(ei|ar|e)|invest(i|ir|e|a|imos)|deposit(ei|ar|e|a)|apliq(uei)|aplic(ar|a|ou)|cofrinho|caixinha)\b/;
+    const verboGuardar = /\b(guard(ei|ar|e|a|amos)|junt(ei|ar|e|a)|poup(ei|ar|e|a)|economiz(ei|ar)|separ(ei|ar|e|a)|reserv(ei|ar|e)|invest(i|ir|e|a|imos)|deposit(ei|ar|e|a)|apliq(uei)|aplic(ar|a|ou)|cofrinho|caixinha)\b|\b(coloquei|botei)\b.*\b(poupanca|reserva|sonho)\b/;
     const soReservou = /\breserv(ei|ar|e)\b/.test(t) && !/\b(guard|junt|poup|economiz|separ|invest|deposit|aplic|cofrinho|caixinha)/.test(t) && !/\b(para|pra|pro)\b/.test(t); // "reservei o hotel 500" é gasto
     if (val && verboGuardar.test(t) && !soReservou && !/\b(gastei|comprei|paguei|guarda.?roupa|guarda.?chuva)\b/.test(t)) {
       const restoOrig = (limparDescricao(original, [val.trecho, dt && dt.trecho, 'guardei', 'guardar', 'guarde', 'guarda', 'juntei', 'juntar', 'poupei', 'poupar', 'economizei', 'separei', 'separar', 'reservei', 'reservar', 'investi', 'investir', 'invista', 'depositei', 'depositar', 'apliquei', 'aplicar', 'coloquei', 'colocar', 'coloca', 'coloque', 'botei', 'sonho', 'meu', 'minha', 'nosso', 'nossa', 'dinheiro', 'valor'])) || '';
@@ -902,7 +973,7 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
     const ehCompromisso = /\b(compromisso|consulta|reuniao|lembr\w*|agend\w*|marc\w*|dentista|medico|aniversario|encontro|visita|entrevista|exame|buscar|levar|ligar para|evento|festa|curso)\b/.test(t);
     const ehConta = /\b(conta|boleto|fatura|vence|vencimento|mensalidade|todo dia|todo mes|mensal)\b/.test(t);
     // "conta do restaurante 120" é um gasto; conta fixa precisa de sinal de vencimento
-    const contaFixa = ehConta && (/\b(vence|vencimento|boleto|mensalidade|todo dia|todo mes|mensal)\b/.test(t) || (/\bdia\s+\d{1,2}\b/.test(t) && !/\b(deu|ficou|saiu|custou|dividi|dividimos|rachei|rachamos)\b/.test(t)));
+    const contaFixa = vaiPagar || (ehConta && (/\b(vence|vencimento|boleto|mensalidade|todo dia|todo mes|mensal)\b/.test(t) || (/\bdia\s+\d{1,2}\b/.test(t) && !/\b(deu|ficou|saiu|custou|dividi|dividimos|rachei|rachamos)\b/.test(t))));
     if (ehCompromisso && (!val || (hr && !/\b(paguei|gastei|comprei)\b/.test(t))) && !(ehConta && val)) {
       const titulo = limparDescricao(original, [dtF && dtF.trecho, hr && hr.trecho, 'compromisso', 'me lembra', 'me lembre', 'lembrete', 'lembrar', 'agendar', 'agenda', 'marcar', 'marca', 'tenho', 'vou ter', 'vou', 'que', 'de', 'as', 'às', 'horas', 'hora', 'amanhã', 'hoje']) || 'Compromisso';
       return { tipo: 'compromisso', titulo, data: dtF ? dtF.data : iso(hoje), hora: hr ? hr.hora : '', valor: val ? val.valor : null };
@@ -912,13 +983,14 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
     if (contaFixa && !/\b(paguei|gastei)\b/.test(t)) {
       const diaM = t.match(/\bdia\s+(\d{1,2})\b/);
       const dia = diaM ? +diaM[1] : (dtF ? +dtF.data.slice(8, 10) : null);
-      const nome = limparDescricao(original, [val && val.trecho, dtF && dtF.trecho, diaM && diaM[0], 'conta de', 'conta do', 'conta da', 'conta', 'boleto', 'fatura', 'vence', 'vencimento', 'todo', 'mes', 'mês', 'mensal', 'cadastra', 'cadastrar', 'nova', 'tenho', 'que', 'pagar', 'valor']) || 'Conta';
+      const nome = limparDescricao(original, [val && val.trecho, dtF && dtF.trecho, diaM && diaM[0], 'conta de', 'conta do', 'conta da', 'conta', 'boleto', 'fatura', 'vence', 'vencimento', 'todo', 'mes', 'mês', 'mensal', 'cadastra', 'cadastrar', 'nova', 'tenho', 'preciso', 'vou ter', 'que', 'pagar', 'valor']) || 'Conta';
       const recorrente = !/\b(so esse mes|uma vez|unica)\b/.test(t);
       return { tipo: 'conta', nome, valor: val ? val.valor : 0, dia: Math.max(1, Math.min(31, dia || hoje.getDate())), cat: adivinharCategoria(t + ' ' + sem(nome), opts.categorias) === 'Outros' ? 'Contas da Casa' : adivinharCategoria(t + ' ' + sem(nome), opts.categorias), recorrente, vencimento: dtF && !diaM ? dtF.data : null };
     }
 
     if (!val) {
       if (/\bpaguei\b/.test(t)) return { tipo: 'pagar_conta', chave: t, data: dt ? dt.data : iso(hoje) };
+      if (/\b(gastei|gastamos|comprei|compramos|abasteci|almocei|jantei|fui (ao|no|na))\b/.test(t)) return { tipo: 'falta_valor', texto: original };
       return { tipo: 'desconhecido', texto: original };
     }
 
@@ -977,10 +1049,30 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
     }
     return o;
   }
+  const limpaEmoji = (e) => String(e == null ? '' : e).replace(/[<>"'&`]/g, '').slice(0, 8);
+  const corValida = (c, padrao) => (/^#[0-9a-f]{3,8}$/i.test(c) ? c : padrao);
+  const COLS_ITENS = ['lancamentos', 'contas', 'rendas', 'parcelados', 'cartoes', 'tickets', 'recargas', 'anuais', 'sonhos', 'dividas', 'agenda'];
+  /** Corrige o que chega de fora (app antigo, backup ou requisição forjada) antes de ser usado. */
   function sanearEstado(estado) {
     if (!estado || typeof estado !== 'object') return estado;
-    for (const col of ['lancamentos', 'contas', 'rendas', 'parcelados', 'cartoes', 'tickets', 'recargas', 'anuais', 'sonhos', 'dividas', 'agenda', 'categorias']) if (Array.isArray(estado[col])) estado[col].forEach((x) => sanearItem(x));
-    if (estado.perfil) sanearItem(estado.perfil);
+    if (!estado.perfil || typeof estado.perfil !== 'object' || Array.isArray(estado.perfil)) estado.perfil = {};
+    const pf = estado.perfil;
+    if (typeof pf.nome !== 'string') pf.nome = '';
+    if (typeof pf.whatsapp !== 'string') pf.whatsapp = String(pf.whatsapp == null ? '' : pf.whatsapp);
+    if (!/^\d{2}:\d{2}$/.test(pf.lembreteHora || '')) pf.lembreteHora = '08:00';
+    pf.orcamento = Number(pf.orcamento) || 0; pf.saldoInicial = Number(pf.saldoInicial) || 0;
+    if (Number(estado.perfilUpd) > Date.now() + 864e5) estado.perfilUpd = Date.now();
+    for (const col of COLS_ITENS) estado[col] = Array.isArray(estado[col]) ? estado[col].filter((x) => x && typeof x === 'object' && !Array.isArray(x) && x.id) : [];
+    if (!Array.isArray(estado.categorias) || !estado.categorias.length) estado.categorias = CATEGORIAS.map((c) => ({ nome: c.nome, emoji: c.emoji, cor: c.cor, limite: 0 }));
+    estado.categorias = estado.categorias.filter((c) => c && typeof c === 'object' && !Array.isArray(c)).map((c) => Object.assign(c, { nome: String(c.nome == null ? '' : c.nome), emoji: limpaEmoji(c.emoji), cor: corValida(c.cor, '#9AA3AF') }));
+    if (!Array.isArray(estado.excluidos)) estado.excluidos = [];
+    for (const col of COLS_ITENS.concat('categorias')) estado[col].forEach((x) => sanearItem(x));
+    for (const col of ['lancamentos', 'recargas', 'agenda']) for (const x of estado[col]) if (!/^\d{4}-\d{2}-\d{2}$/.test(x.data || '')) x.data = iso(new Date());
+    for (const a of estado.agenda) if (a.hora && !/^\d{2}:\d{2}$/.test(a.hora)) a.hora = '';
+    for (const x of estado.sonhos) { x.emoji = limpaEmoji(x.emoji); if (!Array.isArray(x.aportes)) x.aportes = []; }
+    for (const x of estado.cartoes) x.cor = corValida(x.cor, '#1B3A6B');
+    for (const x of estado.tickets) x.cor = corValida(x.cor, COR_TICKET);
+    sanearItem(pf);
     if (Array.isArray(estado.chat)) estado.chat = estado.chat.slice(-200).map((m) => ({ de: m.de === 'me' ? 'me' : 'bot', txt: String(m.txt || '').slice(0, 4000), em: +m.em || 0 }));
     return estado;
   }
@@ -1044,6 +1136,7 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
     for (const x of u.alterados) {
       const lista = estado[x.col] = estado[x.col] || [];
       const i = lista.findIndex((y) => y.id === x.item.id);
+      if (x.col === 'sonhos' && i >= 0) { const volta = new Set((x.item.aportes || []).map((ap) => ap.id)); for (const ap of lista[i].aportes || []) if (!volta.has(ap.id)) marcarExcluido(estado, ap.id, 'aportes'); }
       const item = Object.assign({}, x.item, { upd: now });
       if (i >= 0) lista[i] = item; else lista.push(item);
     }
@@ -1192,6 +1285,29 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
         else { s = { id: uid(), nome: acao.nome, emoji: '⭐', custo: acao.valor, prazo: '', guardadoAntes: 0, aportes: [], upd: now }; estado.sonhos.push(s); criado = true; }
         return { ok: true, item: s, colecao: 'sonhos', msg: `🌈 ${criado ? 'Sonho criado' : 'Meta atualizada'}: *${s.nome}*, ${brl(acao.valor)}. Quando guardar, me diga: "guardei 200 para ${s.nome.toLowerCase()}". ⭐` };
       }
+      case 'conversa': return { ok: true, msg: acao.msg };
+      case 'falta_valor': return { ok: false, pergunta: { tipo: 'valor', texto: acao.texto, em: now }, msg: 'Quanto foi? 🙂 É só me mandar o valor.' };
+      case 'quanto_posso': {
+        const ymQ = mesDe(iso(hoje)); const rq = resumoMes(estado, ymQ);
+        const temOrc = Number(estado.perfil && estado.perfil.orcamento) > 0;
+        if (!temOrc && !rq.entradas) return { ok: true, msg: '🌱 Ainda não sei a sua renda deste mês. Me diga: "meu salário é 3500 todo dia 5" ou "orçamento 3000".' };
+        const livre = centavos(temOrc ? rq.orcamento - rq.gastoTotal : rq.sobra);
+        const dias = diasNoMes(ymQ) - hoje.getDate() + 1;
+        if (livre <= 0) return { ok: true, msg: `💛 O ${temOrc ? 'orçamento' : 'dinheiro'} deste mês já acabou${livre < 0 ? ` e passou ${brl(-livre)}` : ''}. Vamos segurar até o mês virar?` };
+        return { ok: true, msg: `💵 Até o fim do mês, você ainda pode gastar ${brl(livre)}.\nDá ${brl(Math.floor(livre / dias * 100) / 100)} por dia, contando hoje (${dias} ${dias === 1 ? 'dia' : 'dias'}).` };
+      }
+      case 'maior_gasto': {
+        const ymM = mesDe(iso(hoje)); const rm = resumoMes(estado, ymM);
+        if (!rm.maiorCategoria) return { ok: true, msg: `🌱 Ainda não há gastos em ${nomeMes(ymM)}.` };
+        const totM = Object.values(rm.porCategoria).reduce((q, w) => q + w, 0);
+        return { ok: true, msg: `🔝 Seu maior gasto em ${nomeMes(ymM)} é *${rm.maiorCategoria.nome}*: ${brl(rm.maiorCategoria.valor)} (${Math.round(rm.maiorCategoria.valor / totM * 100)}% do total).` };
+      }
+      case 'consulta_gasto': {
+        const achados = (estado.lancamentos || []).filter((l) => l.tipo === 'gasto' && mesDe(l.data) === acao.ym && (acao.cat ? l.cat === acao.cat : sem(l.desc + ' ' + l.cat).includes(acao.termo)));
+        const totC = acao.cat ? centavos(resumoMes(estado, acao.ym).porCategoria[acao.cat] || 0) : centavos(somaValor(achados));
+        if (!totC) return { ok: true, msg: `🔎 Não achei gastos com ${acao.cat || acao.termo} em ${nomeMes(acao.ym)}.` };
+        return { ok: true, msg: `🔎 Em ${nomeMes(acao.ym)} você gastou ${brl(totC)} com *${acao.cat || acao.termo}*${achados.length ? ` (${achados.length} ${achados.length === 1 ? 'lançamento' : 'lançamentos'})` : ''}.` };
+      }
       case 'plano': return { ok: true, msg: acao.msg || '💭 Entendi isso como um plano ou uma pergunta, então não lancei nada.\nQuando acontecer, me diga: "comprei ...", "paguei ..." ou "guardei ...".' };
       case 'compromisso': {
         const item = { id: uid(), titulo: acao.titulo, data: acao.data, hora: acao.hora || '', lembrar: true, feito: false, origem, upd: now };
@@ -1304,9 +1420,12 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
   function remover(estado, col, id) {
     if (col === 'lancamentos') {
       const l = (estado.lancamentos || []).find((x) => x.id === id);
-      if (l && l.sonhoId) { const sn = (estado.sonhos || []).find((x) => x.id === l.sonhoId); if (sn) { sn.aportes = (sn.aportes || []).filter((ap) => ap.entradaId !== id); sn.upd = Date.now(); } }
+      if (l && l.sonhoId) { const sn = (estado.sonhos || []).find((x) => x.id === l.sonhoId); if (sn) { for (const ap of sn.aportes || []) if (ap.entradaId === id) marcarExcluido(estado, ap.id, 'aportes'); sn.aportes = (sn.aportes || []).filter((ap) => ap.entradaId !== id); sn.upd = Date.now(); } }
     }
     estado[col] = (estado[col] || []).filter((x) => x.id !== id);
+    marcarExcluido(estado, id, col);
+  }
+  function marcarExcluido(estado, id, col) {
     estado.excluidos = estado.excluidos || [];
     estado.excluidos.push({ id, col, em: Date.now() });
     if (estado.excluidos.length > 2000) estado.excluidos = estado.excluidos.slice(-2000);
@@ -1434,7 +1553,7 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
     // saldo acumulado
     let saldoAcum = Number(estado.perfil && estado.perfil.saldoInicial) || 0;
     const meses = mesesComDados(estado);
-    for (const m of meses) { if (m > ym) break; if (m === ym) continue; const r = resumoSimples(estado, m); saldoAcum += r; }
+    if (meses.length) for (let m = meses[0], i = 0; m < ym && i < 600; m = somaMes(m, 1), i++) saldoAcum += resumoSimples(estado, m);
     saldoAcum += sobra;
     const maior = Object.entries(porCategoria).sort((a, b) => b[1] - a[1])[0];
     return {
@@ -1442,7 +1561,7 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
       pctOrcamento: orcamento > 0 ? gastoTotal / orcamento : 0, pctGuardado: entradas > 0 ? guardado / entradas : 0,
       maiorCategoria: maior ? { nome: maior[0], valor: maior[1] } : null, anuaisMes, lancamentos: L,
       // dinheiro que já saiu de fato: gastos pagos (dinheiro, pix, débito), contas pagas, faturas pagas e o que foi guardado
-      jaSaiu: (() => { const g = L.filter((l) => l.tipo === 'gasto' && !l.ticket && !l.cartaoId && l.pagamento !== 'Cartão').reduce((a, b) => a + b.valor, 0); const fat = (estado.cartoes || []).reduce((a, c) => { const f = fatura(estado, c.id, ym); return a + (f ? f.pago : 0); }, 0); const parcSem = parcs.filter((x) => !x.p.cartaoId && x.p.pagos && x.p.pagos[ym]).reduce((a, b) => a + b.p.valor, 0); return g + fixasPagas + fat + parcSem + guardado; })()
+      jaSaiu: (() => { const g = L.filter((l) => l.tipo === 'gasto' && !l.ticket && !l.cartaoId && l.pagamento !== 'Cartão').reduce((a, b) => a + b.valor, 0); const fat = (estado.cartoes || []).reduce((a, c) => a + Object.entries(c.faturas || {}).reduce((q, [ymF, reg]) => { if (!reg || (reg.em ? mesDe(iso(new Date(reg.em))) : ymF) !== ym) return q; const f = fatura(estado, c.id, ymF); return q + (f ? f.pago : 0); }, 0), 0); const parcSem = parcs.filter((x) => !x.p.cartaoId && x.p.pagos && x.p.pagos[ym]).reduce((a, b) => a + b.p.valor, 0); return g + fixasPagas + fat + parcSem + guardado; })()
     };
   }
   function resumoSimples(estado, ym) {
@@ -1512,7 +1631,7 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
   }
   function textoAjuda(estado) {
     const n = estado.perfil && estado.perfil.nome ? ', ' + estado.perfil.nome.split(' ')[0] : '';
-    return `Oi${n}! 💙 Eu sou o *Sonhaí*, seu parceiro das finanças.\n\nVocê pode me mandar texto ou áudio:\n🛒 "gastei 45,90 no mercado"\n💰 "recebi 3500 de salário"\n🔁 "meu salário é 3500 todo dia 5"\n🛍️ "comprei uma TV de 2000 em 10x no cartão Nubank"\n💳 "gastei 10 na lanchonete no cartão de crédito Itaú"\n💳 "paguei a fatura do Itaú" • "paguei 500 da fatura do Bradesco"\n🎟️ "caiu 800 no ticket" • "gastei 50 no mercado no ticket" • "saldo do ticket"\n🗓️ "conta de luz vence dia 10, 150 reais"\n📌 "dentista quinta às 14h"\n⭐ "guardei 200 para a viagem" • "investi 500"\n🌈 "meta de 10000 para o carro"\n💸 "retire 500 da reserva de emergência e coloque como renda"\n🔁 "transfere 300 da reserva para a viagem"\n🗑️ "exclui o gasto de 45,90"\n↩️ "desfazer"\n📊 "resumo" • "contas a pagar" • "agenda"`;
+    return `Oi${n}! 💙 Eu sou o *Sonhaí*, seu parceiro das finanças.\n\nVocê pode me mandar texto ou áudio:\n🛒 "gastei 45,90 no mercado"\n🛒 "gastei 50 no mercado e 30 na padaria"\n💰 "recebi 3500 de salário"\n🔁 "meu salário é 3500 todo dia 5"\n🛍️ "comprei uma TV de 2000 em 10x no cartão Nubank"\n💳 "gastei 10 na lanchonete no cartão de crédito Itaú"\n💳 "paguei a fatura do Itaú" • "paguei 500 da fatura do Bradesco"\n🎟️ "caiu 800 no ticket" • "gastei 50 no mercado no ticket" • "saldo do ticket"\n🗓️ "conta de luz vence dia 10, 150 reais"\n📌 "dentista quinta às 14h"\n⭐ "guardei 200 para a viagem" • "investi 500"\n🌈 "meta de 10000 para o carro"\n💸 "retire 500 da reserva de emergência e coloque como renda"\n🔁 "transfere 300 da reserva para a viagem"\n🗑️ "exclui o gasto de 45,90"\n↩️ "desfazer"\n📊 "resumo" • "contas a pagar" • "agenda"\n🔎 "quanto gastei com mercado" • "quanto posso gastar hoje" • "qual meu maior gasto"`;
   }
   function barra(p) { const n = Math.max(0, Math.min(10, Math.round(p * 10))); return '🟩'.repeat(Math.min(n, 7)) + (n > 7 ? '🟨'.repeat(Math.min(n - 7, 2)) : '') + (n > 9 ? '🟥' : '') + '⬜'.repeat(10 - n); }
   function mensagemHumor(r) {
@@ -1593,6 +1712,12 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
       }
       out[col] = Object.values(mapa);
     }
+    // cada dinheiro guardado é um registro: o que entrou em dois aparelhos soma, nunca sobrescreve
+    for (const s of out.sonhos || []) {
+      const porId = new Map();
+      for (const lado of [a, b]) { const c = (lado.sonhos || []).find((x) => x && x.id === s.id); for (const ap of (c && Array.isArray(c.aportes) && c.aportes) || []) if (ap && ap.id && !exc.has(ap.id)) porId.set(ap.id, ap); }
+      s.aportes = (Array.isArray(s.aportes) ? s.aportes : []).filter((ap) => ap && !ap.id).concat([...porId.values()].sort((x, y) => String(x.data).localeCompare(String(y.data))));
+    }
     if ((b.perfilUpd || 0) > (a.perfilUpd || 0)) { out.perfil = b.perfil; out.perfilUpd = b.perfilUpd; }
     out.chat = (b.chat || a.chat || []).slice(-200);
     return out;
@@ -1602,7 +1727,7 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
     CATEGORIAS, TIPOS_ENTRADA, INCENTIVOS, MESES, sem, uid, iso, pad, brl, dataBR, mesDe, nomeMes, mesCurto, somaMes, difMeses, diasNoMes, agora,
     VERSICULOS, versiculoDoDia, LIMITE_VALOR, LIMITE_TEXTO, sanearEstado, BANCOS, detectarCartao, garantirCartao, mesFatura, diaFechamento, vencFatura, fatura, pagarFatura, faturasAVencer, faturaDaVez, rotuloFatura,
     NOME_TICKET, COR_TICKET, detectarTicket, garantirTicket, saldoTicket, gastoTicketMes, extratoTicket, excluirTicket,
-    conversar, interpretar, aplicar, remover, acharExclusao, descreverAlvo, valorConta, definirValorConta, encerrarConta, garantirRendas, acharSonho, retirarDoSonho, estadoVazio, marcarPrimeiroAcesso, resumoMes, mesesComDados, parcelaNoMes, contaNoMes, contasAVencer, contasAtrasadas, totalSonho,
+    conversar, interpretar, separarLancamentos, lancarVarios, aplicar, remover, marcarExcluido, acharExclusao, descreverAlvo, valorConta, definirValorConta, encerrarConta, garantirRendas, acharSonho, retirarDoSonho, estadoVazio, marcarPrimeiroAcesso, resumoMes, mesesComDados, parcelaNoMes, contaNoMes, contasAVencer, contasAtrasadas, totalSonho,
     textoResumo, textoContas, textoAgenda, textoAjuda, mensagemHumor, barra, mesclar, adivinharCategoria, extrairValor, extrairData, extrairHora
   };
 });
@@ -1621,13 +1746,14 @@ const store = {
   get(){ try { const v = localStorage.getItem(KEY); return v ? JSON.parse(v) : mem; } catch(e){ return mem; } },
   set(v){ mem = v; try { localStorage.setItem(KEY, JSON.stringify(v)); } catch(e){} }
 };
-let token = '', codReset = '';
+let token = '', codReset = '', codEntrada = '';
 try {
   const qs = new URLSearchParams(location.search);
   codReset = qs.get('r') || '';
   token = qs.get('t') || localStorage.getItem('cc-token') || '';
   if (qs.get('t')) { localStorage.setItem('cc-token', token); localStorage.removeItem(KEY); }
-  if (qs.get('t') || qs.get('r')) history.replaceState(null, '', location.pathname + location.hash);
+  codEntrada = qs.get('e') || '';
+  if (qs.get('t') || qs.get('r') || codEntrada) history.replaceState(null, '', location.pathname + location.hash);
 } catch(e){}
 let conta = null, cfg = { whatsapp: '', cadastroAberto: true }, codAcesso = '', infoAcesso = null;
 try { codAcesso = new URLSearchParams(location.search).get('acesso') || ''; if (codAcesso) history.replaceState(null, '', location.pathname + location.hash); } catch(e){}
@@ -1673,8 +1799,9 @@ function exemplo(){
   s.agenda.push({ id: C.uid(), titulo: 'Aniversário da vó', data: ad(4), hora: '', lembrar: true, upd: Date.now() });
   const itau = { id: C.uid(), nome: 'Itaú', cor: '#EC7000', diaVenc: 10, fechamento: 0, limite: 5000, faturas: {}, upd: Date.now() };
   const nu = { id: C.uid(), nome: 'Nubank', cor: '#820AD1', diaVenc: 15, fechamento: 0, limite: 3000, faturas: {}, upd: Date.now() };
-  for (const m of [C.somaMes(ym, -3), C.somaMes(ym, -2)]) { itau.faturas[m] = { status: 'total', pago: null, em: Date.now() }; nu.faturas[m] = { status: 'total', pago: null, em: Date.now() }; }
-  itau.faturas[ant] = { status: 'total', pago: null, em: Date.now() }; nu.faturas[ant] = { status: 'parcial', pago: 150, em: Date.now() };
+  const emMes = (m) => new Date(m + '-15T12:00').getTime();
+  for (const m of [C.somaMes(ym, -3), C.somaMes(ym, -2)]) { itau.faturas[m] = { status: 'total', pago: null, em: emMes(m) }; nu.faturas[m] = { status: 'total', pago: null, em: emMes(m) }; }
+  itau.faturas[ant] = { status: 'total', pago: null, em: emMes(ant) }; nu.faturas[ant] = { status: 'parcial', pago: 150, em: emMes(ant) };
   s.cartoes = [itau, nu];
   const tk = C.garantirTicket(s, { novo: true, nome: C.NOME_TICKET });
   s.recargas.push({ id: C.uid(), ticketId: tk.id, data: d(ym, 1), desc: 'Crédito', valor: 800, origem: 'exemplo', upd: Date.now() });
@@ -1689,19 +1816,37 @@ S.cartoes = S.cartoes || [];
 S.tickets = S.tickets || [];
 S.recargas = S.recargas || [];
 const limpaEmoji = (e) => String(e || '').replace(/[<>"'&`]/g, '').slice(0, 8);
-function sanear(){ (S.categorias || []).forEach((c) => { c.emoji = limpaEmoji(c.emoji); c.cor = /^#[0-9a-f]{3,8}$/i.test(c.cor) ? c.cor : '#9AA3AF'; }); (S.sonhos || []).forEach((x) => { x.emoji = limpaEmoji(x.emoji); }); (S.cartoes || []).forEach((x) => { x.cor = /^#[0-9a-f]{3,8}$/i.test(x.cor) ? x.cor : '#1B3A6B'; }); (S.tickets || []).forEach((x) => { x.cor = /^#[0-9a-f]{3,8}$/i.test(x.cor) ? x.cor : C.COR_TICKET; }); }
-sanear(); C.sanearEstado(S); C.garantirRendas(S, hoje());
+function sanear(){ C.sanearEstado(S); }
+sanear(); C.garantirRendas(S, hoje());
 
 // ------------------------------------------------------------ salvar e sincronizar
 let syncT = null, rev = 0;
-function save(skipSync){ S.upd = Date.now(); store.set(S); render(); if (SERVER && token && !skipSync) { clearTimeout(syncT); syncT = setTimeout(push, 700); } }
+function save(skipSync){ S.upd = Date.now(); store.set(S); render(); if (SERVER && token && !skipSync) { marcarEnvio(true); clearTimeout(syncT); syncT = setTimeout(push, 700); } }
 async function pull(){
   if (!SERVER || !token) return;
-  try { const r = await fetch('/api/estado', { headers: { Authorization: 'Bearer ' + token } }); if (r.status === 401) return sairLocal(); if (!r.ok) return; const j = await r.json(); S = C.mesclar(S.demo ? Object.assign(C.estadoVazio(), { sonhos: [] }) : S, j.estado); delete S.demo; S.cartoes = S.cartoes || []; sanear(); rev = j.rev; if (C.garantirRendas(S, hoje())) { clearTimeout(syncT); syncT = setTimeout(push, 700); } store.set(S); render(); } catch(e){}
+  try { const r = await fetch('/api/estado', { headers: { Authorization: 'Bearer ' + token } }); if (r.status === 401) return sairLocal(); if (!r.ok) return; const j = await r.json(); S = C.mesclar(S.demo ? Object.assign(C.estadoVazio(), { sonhos: [] }) : S, j.estado); delete S.demo; S.cartoes = S.cartoes || []; sanear(); rev = j.rev; if (C.garantirRendas(S, hoje()) || naoEnviado) { clearTimeout(syncT); syncT = setTimeout(push, 700); } store.set(S); redesenhar(); } catch(e){}
+}
+// lançou sem internet: fica marcado aqui e sobe assim que a conexão voltar, mesmo se o app for fechado
+let naoEnviado = false; try { naoEnviado = localStorage.getItem('cc-envio') === '1'; } catch(e){}
+function marcarEnvio(v){ naoEnviado = v; try { if (v) localStorage.setItem('cc-envio', '1'); else localStorage.removeItem('cc-envio'); } catch(e){} }
+/** Atualiza a tela sem apagar o que a pessoa está digitando. */
+function redesenhar(){
+  const a = document.activeElement;
+  if (view.tela === 'ajustes' || (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && $('#app').contains(a))) return;
+  render();
 }
 async function push(){
-  try { const r = await fetch('/api/estado', { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify({ estado: S }) }); if (r.ok) { const j = await r.json(); const { pendente, desfazer } = S; S = j.estado; if (pendente) S.pendente = pendente; else delete S.pendente; if (desfazer) S.desfazer = desfazer; else delete S.desfazer; store.set(S); render(); } } catch(e){}
+  const versao = S.upd;
+  try {
+    const r = await fetch('/api/estado', { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify({ estado: S }) });
+    if (!r.ok) { marcarEnvio(true); return; }
+    const j = await r.json();
+    S = C.mesclar(S, j.estado); // junta, nunca troca: o que foi lançado enquanto a resposta vinha não pode sumir
+    sanear(); store.set(S); redesenhar();
+    if (S.upd === versao) marcarEnvio(false);
+  } catch(e){ marcarEnvio(true); }
 }
+window.addEventListener('online', () => { if (naoEnviado && SERVER && token) push(); });
 
 // ------------------------------------------------------------ util de tela
 const catInfo = (n) => (S.categorias || []).find((c) => c.nome === n) || C.CATEGORIAS.find((c) => c.nome === n) || { nome: n, emoji: '✨', cor: '#9AA3AF' };
@@ -2088,7 +2233,7 @@ TELAS.ajustes = function(){
   h += '<section class="card"><h2 style="margin-bottom:10px">🏷️ Categorias e limites</h2><div class="sub" style="margin-bottom:8px">Toque para mudar o emoji, o nome ou colocar um limite mensal. Eu aviso quando passar.</div><div class="list">' + S.categorias.map((c, i) => '<button class="item" data-edit-cat="' + i + '"><span class="ico" style="background:' + soft(c.cor) + '">' + c.emoji + '</span><span class="mid"><span class="ttl">' + esc(c.nome) + '</span><span class="meta">' + (c.limite ? 'Limite ' + brl(c.limite) : 'Sem limite') + '</span></span></button>').join('') + '</div><button class="btn ghost block" style="margin-top:8px" data-novo="categoria">+ Nova categoria</button></section>';
   h += '<section class="card"><h2 style="margin-bottom:10px">💾 Meus dados no aparelho</h2><div class="btnrow"><button class="btn ghost" id="bk-exp">⬇️ Copiar backup</button><label class="btn ghost" for="bk-imp">⬆️ Importar backup</label><input id="bk-imp" type="file" accept=".json,application/json" hidden></div>' + (SERVER ? '' : '<div class="btnrow" style="margin-top:8px"><button class="btn ghost" id="bk-demo">🧪 Ver exemplo</button><button class="btn danger" id="bk-zero">🧹 Começar do zero</button></div>') + '<div id="bk-out"></div></section>';
   h += blocoConta();
-  h += '<p class="sub" style="text-align:center">Sonhaí · versão 1.10 (05/11) · feito com 💙 para ajudar famílias</p>';
+  h += '<p class="sub" style="text-align:center">Sonhaí · versão 1.11 (05/11) · feito com 💙 para ajudar famílias</p>';
   return h;
 };
 
@@ -2166,6 +2311,7 @@ function guiaPassos(){
     { tela: 'sonhos', alvo: '[data-novo="sonho"]', onde: 'Mais › Sonhos', t: '⭐ Seus sonhos', x: 'Crie um sonho com valor e prazo. Eu mostro quanto guardar por mês.' },
     { tela: 'ajustes', alvo: '#aj-orc', onde: 'Mais › Ajustes', t: '🎯 Orçamento do mês', x: 'Defina quanto pode gastar por mês. Eu aviso antes de estourar.' },
     { tela: 'whatsapp', alvo: '#tg-on, #tg-off, #wa-num', onde: 'Mais › Mensagens', t: '🔔 Lembretes', x: 'Conecte aqui para lançar gastos por mensagem e receber os lembretes no celular.', se: () => SERVER },
+    { t: '📖 Palavra do dia', x: 'Quer receber um versículo bíblico por dia, no app e nos lembretes da manhã?', bt: 'Quero', nao: 'Agora não', se: () => !!S.perfil.guiaTour, escolha: (sim) => { S.perfil.versiculo = sim; S.perfilUpd = Date.now(); store.set(S); } },
     { tela: 'inicio', t: 'Prontinho! 🎉', x: (S.perfil.guiaPassos ? 'Na tela inicial, deixei uma lista com os seus primeiros passos. ' : '') + 'Para ver este guia de novo, toque em Mais › Como usar.', bt: 'Começar' }
   ].filter((p) => !p.se || p.se());
 }
@@ -2185,8 +2331,9 @@ function guiaIr(i){
   guia.i = i; const p = guia.passos[i]; const ultimo = i === guia.passos.length - 1;
   if (p.tela && view.tela !== p.tela) { view.tela = p.tela; render(); }
   const box = $('#gui-box');
-  box.innerHTML = '<div class="gui-topo"><span class="num">' + (i + 1) + ' de ' + guia.passos.length + '</span>' + (ultimo ? '' : '<button class="link" id="gui-x" type="button">Pular</button>') + '</div><div class="gui-barra"><i style="width:' + ((i + 1) / guia.passos.length * 100) + '%"></i></div><h3>' + esc(p.t) + '</h3>' + (p.onde ? '<span class="chip info">📍 ' + esc(p.onde) + '</span>' : '') + '<p>' + esc(p.x) + '</p><div class="btnrow">' + (i ? '<button class="btn ghost" id="gui-v" type="button">Voltar</button>' : '') + '<button class="btn pri" id="gui-ok" type="button">' + esc(p.bt || 'Próximo') + '</button></div>';
-  $('#gui-ok').onclick = () => guiaIr(i + 1);
+  box.innerHTML = '<div class="gui-topo"><span class="num">' + (i + 1) + ' de ' + guia.passos.length + '</span>' + (ultimo ? '' : '<button class="link" id="gui-x" type="button">Pular</button>') + '</div><div class="gui-barra"><i style="width:' + ((i + 1) / guia.passos.length * 100) + '%"></i></div><h3>' + esc(p.t) + '</h3>' + (p.onde ? '<span class="chip info">📍 ' + esc(p.onde) + '</span>' : '') + '<p>' + esc(p.x) + '</p><div class="btnrow">' + (p.nao ? '<button class="btn ghost" id="gui-n" type="button">' + esc(p.nao) + '</button>' : i ? '<button class="btn ghost" id="gui-v" type="button">Voltar</button>' : '') + '<button class="btn pri" id="gui-ok" type="button">' + esc(p.bt || 'Próximo') + '</button></div>';
+  $('#gui-ok').onclick = () => { if (p.escolha) p.escolha(true); guiaIr(i + 1); };
+  const n = $('#gui-n'); if (n) n.onclick = () => { p.escolha(false); guiaIr(i + 1); };
   const v = $('#gui-v'); if (v) v.onclick = () => guiaIr(i - 1);
   const x = $('#gui-x'); if (x) x.onclick = guiaFim;
   const alvo = p.alvo && document.querySelector(p.alvo);
@@ -2290,7 +2437,7 @@ function bind(){
   // ajustes
   const as = $('#aj-salvar'); if (as) { $('#aj-tema').value = S.perfil.tema || 'auto'; as.onclick = () => { const p = S.perfil; p.nome = $('#aj-nome').value.trim(); p.orcamento = num($('#aj-orc').value); p.saldoInicial = num($('#aj-saldo').value); p.lembreteHora = $('#aj-hora').value || '08:00'; p.tema = $('#aj-tema').value; p.versiculo = $('#aj-vers').checked; S.perfilUpd = Date.now(); save(); toast('💾 Tudo salvo!'); }; }
   const be = $('#bk-exp'); if (be) be.onclick = backupExport;
-  const bi = $('#bk-imp'); if (bi) bi.onchange = () => { const f = bi.files[0]; if (!f) return; const fr = new FileReader(); fr.onload = () => { try { const j = JSON.parse(fr.result); if (!j.lancamentos) throw 0; S = j; delete S.demo; S.perfilUpd = Date.now(); save(); toast('✅ Dados importados! Bem-vindo(a) de volta.'); confete(); go('inicio'); } catch(e){ toast('Esse arquivo não parece um backup do Sonhaí.'); } }; fr.readAsText(f); };
+  const bi = $('#bk-imp'); if (bi) bi.onchange = () => { const f = bi.files[0]; if (!f) return; const fr = new FileReader(); fr.onload = () => { try { const j = JSON.parse(fr.result); if (!j.lancamentos) throw 0; S = j; delete S.demo; S.perfilUpd = Date.now(); sanear(); save(); toast('✅ Dados importados! Bem-vindo(a) de volta.'); confete(); go('inicio'); } catch(e){ toast('Esse arquivo não parece um backup do Sonhaí.'); } }; fr.readAsText(f); };
   const bd = $('#bk-demo'); if (bd) bd.onclick = () => confirmar('Carregar os dados de exemplo? Seus dados atuais serão substituídos.', () => { S = exemplo(); save(); go('inicio'); });
   const bz = $('#bk-zero'); if (bz) bz.onclick = () => confirmar('Apagar tudo e começar do zero?', () => { S = C.estadoVazio(); save(); onboarding(); });
 }
@@ -2425,9 +2572,9 @@ function formAporte(s){
 }
 function removerAporte(s, id){
   const a = (s.aportes || []).find((x) => x.id === id); if (!a) return;
-  s.aportes = s.aportes.filter((x) => x.id !== id); s.upd = Date.now();
+  s.aportes = s.aportes.filter((x) => x.id !== id); s.upd = Date.now(); C.marcarExcluido(S, id, 'aportes');
   if (a.entradaId) C.remover(S, 'lancamentos', a.entradaId);
-  if (a.transferencia) { const outro = S.sonhos.find((x) => x.id === (a.para || a.de)); if (outro) { const par = (outro.aportes || []).find((x) => x.transferencia && (x.de === s.id || x.para === s.id) && Math.abs(x.valor) === Math.abs(a.valor) && x.data === a.data); if (par) { outro.aportes = outro.aportes.filter((x) => x !== par); outro.upd = Date.now(); } } }
+  if (a.transferencia) { const outro = S.sonhos.find((x) => x.id === (a.para || a.de)); if (outro) { const par = (outro.aportes || []).find((x) => x.transferencia && (x.de === s.id || x.para === s.id) && Math.abs(x.valor) === Math.abs(a.valor) && x.data === a.data); if (par) { outro.aportes = outro.aportes.filter((x) => x !== par); outro.upd = Date.now(); C.marcarExcluido(S, par.id, 'aportes'); } } }
 }
 function formRetirar(s){
   const saldo = C.totalSonho(s); const outros = S.sonhos.filter((x) => x.id !== s.id);
@@ -2497,10 +2644,18 @@ async function gravar(){
 function pararVoz(){ try { rec && rec.stop(); } catch(e){} try { gravador && gravador.state === 'recording' && gravador.stop(); } catch(e){} }
 const ROTULO = { ticket_credito: '🎟️ Crédito no Ticket', pagar_fatura: '💳 Pagar fatura', config_cartao: '💳 Ajustar cartão', resgate: '💸 Retirar do sonho', gasto: '🛒 Gasto', entrada: '💰 Entrada', parcelado: '🛍️ Compra parcelada', conta: '🧾 Conta fixa', compromisso: '📌 Compromisso', sonho: '⭐ Guardar para sonho', excluir: '🗑️ Excluir', desfazer: '↩️ Desfazer', pagar_conta: '✅ Conta paga', renda_fixa: '🔁 Renda fixa', meta_sonho: '🌈 Meta de sonho' };
 function previa(frase, origem){
-  const a = C.interpretar(String(frase).slice(0, 150), { hoje: hoje(), categorias: S.categorias, sonhos: S.sonhos, cartoes: S.cartoes, tickets: S.tickets });
+  const ctxVoz = { hoje: hoje(), categorias: S.categorias, sonhos: S.sonhos, cartoes: S.cartoes, tickets: S.tickets };
+  const varios = C.separarLancamentos(String(frase).slice(0, 300), ctxVoz);
+  if (varios) {
+    const bv = $('#vz-res'); if (!bv) return;
+    bv.innerHTML = '<div class="result"><span class="chip ok" style="justify-self:start">🧾 ' + varios.length + ' lançamentos</span><div style="display:grid;gap:6px">' + varios.map((x) => '<span><b class="num">' + brl(x.valor) + '</b> · ' + (x.tipo === 'entrada' ? '💰 ' : catInfo(x.cat).emoji + ' ') + esc(x.desc || x.cat) + (x.ticket ? ' · 🎟️' : x.cartao ? ' · 💳' : '') + '</span>').join('') + '</div><div class="btnrow"><button class="btn pri" id="vz-ok" type="button">✔ Confirmar</button></div></div>';
+    $('#vz-ok').onclick = () => { const r = C.lancarVarios(S, varios, { hoje: hoje(), origem: origem || 'voz' }); fechar(); save(); toast('✅ ' + varios.length + ' lançamentos anotados', r.podeDesfazer ? () => { C.aplicar(S, { tipo: 'desfazer' }, { hoje: hoje() }); save(); } : null); };
+    return;
+  }
+  const a = C.interpretar(String(frase).slice(0, 150), ctxVoz);
   if ((a.valor && a.valor > C.LIMITE_VALOR) || (a.valorParcela && a.valorParcela > C.LIMITE_VALOR)) { const box0 = $('#vz-res'); if (box0) box0.innerHTML = '<div class="result" style="border-color:var(--bad)"><div class="msg">🙈 O valor máximo é R$ 99.000.000,00. Confere o valor pra mim?</div></div>'; return; }
   const box = $('#vz-res'); if (!box) return;
-  if (['resumo', 'contas_pendentes', 'agenda_hoje', 'ajuda', 'desconhecido', 'ver_fatura', 'ver_ticket', 'plano'].includes(a.tipo)) { const r = C.aplicar(S, a, { hoje: hoje() }); box.innerHTML = '<div class="result" style="border-color:var(--sky)"><div class="msg">' + fmtWa(r.msg) + '</div></div>'; return; }
+  if (['resumo', 'contas_pendentes', 'agenda_hoje', 'ajuda', 'desconhecido', 'ver_fatura', 'ver_ticket', 'plano', 'conversa', 'falta_valor', 'quanto_posso', 'maior_gasto', 'consulta_gasto'].includes(a.tipo)) { const r = C.aplicar(S, a, { hoje: hoje() }); box.innerHTML = '<div class="result" style="border-color:var(--sky)"><div class="msg">' + fmtWa(r.msg) + '</div></div>'; return; }
   let det = '';
   if (a.tipo === 'excluir') {
     const ax = C.acharExclusao(S, a);
@@ -2656,7 +2811,7 @@ function formAceite(){
 function telaVencida(){
   const sup = (conta.suporte || cfg.suporte || '').replace(/\D/g, '');
   const L = $('#layer');
-  L.innerHTML = '<div class="ob" role="dialog" aria-modal="true"><div class="box"><span class="logo" style="width:64px;height:64px;border-radius:20px;background:var(--sun);display:grid;place-items:center">' + LOGO.replace(/22/g, '38') + '</span><h1>Seu acesso venceu</h1><p>Plano ' + esc(conta.planoNome || '') + (conta.validade ? ' até ' + C.dataBR(conta.validade) : '') + '. Seus dados estão guardados e serão apagados em <b>' + Math.max(0, conta.apagaEm) + ' dias</b>, se o acesso não for renovado.</p>' + (sup ? '<a class="btn sun block" href="https://wa.me/' + sup + '?text=' + encodeURIComponent('Olá! Quero renovar meu acesso ao Sonhaí.') + '" target="_blank" rel="noopener">💬 Renovar pelo WhatsApp</a>' : '') + '<button class="btn block" id="ve-json" style="background:rgba(255,255,255,.14);color:inherit">⬇️ Baixar meus dados</button><button class="btn block" id="ve-csv" style="background:rgba(255,255,255,.14);color:inherit">📊 Baixar lançamentos (Excel)</button><button class="btn block" id="ve-del" style="background:rgba(255,255,255,.14);color:inherit">🗑️ Excluir minha conta</button><button class="btn block" id="ve-sair" style="background:transparent;color:inherit;text-decoration:underline">Sair</button></div></div>';
+  L.innerHTML = '<div class="ob" role="dialog" aria-modal="true"><div class="box"><span class="logo" style="width:64px;height:64px;border-radius:20px;background:var(--sun);display:grid;place-items:center">' + LOGO.replace(/22/g, '38') + '</span><h1>Seu acesso venceu</h1><p>Plano ' + esc(conta.planoNome || '') + (conta.validade ? ' até ' + C.dataBR(conta.validade) : '') + '. Seus dados estão guardados e serão apagados em <b>' + Math.max(0, conta.apagaEm) + ' dias</b>, se o acesso não for renovado.</p>' + botaoRenovar(sup) + '<button class="btn block" id="ve-json" style="background:rgba(255,255,255,.14);color:inherit">⬇️ Baixar meus dados</button><button class="btn block" id="ve-csv" style="background:rgba(255,255,255,.14);color:inherit">📊 Baixar lançamentos (Excel)</button><button class="btn block" id="ve-del" style="background:rgba(255,255,255,.14);color:inherit">🗑️ Excluir minha conta</button><button class="btn block" id="ve-sair" style="background:transparent;color:inherit;text-decoration:underline">Sair</button></div></div>';
   $('#ve-json').onclick = () => baixarDados('json');
   $('#ve-csv').onclick = () => baixarDados('csv');
   $('#ve-del').onclick = () => { L.innerHTML = ''; formExcluirConta(); };
@@ -2672,7 +2827,11 @@ function palavraDoDia(){
 function avisoPlano(){
   if (!conta || conta.dias == null || conta.dias > 5) return '';
   const sup = (conta.suporte || '').replace(/\D/g, '');
-  return '<section class="card" style="background:var(--tile-out)"><h2 style="font-size:18px">⏳ Seu acesso vence ' + (conta.dias <= 0 ? 'hoje' : 'em ' + conta.dias + (conta.dias === 1 ? ' dia' : ' dias')) + '</h2><p style="margin:8px 0">Plano ' + esc(conta.planoNome) + ' até ' + C.dataBR(conta.validade) + '. Renove para continuar usando o Sonhaí sem interrupção.</p>' + (sup ? '<a class="btn sun block" href="https://wa.me/' + sup + '?text=' + encodeURIComponent('Olá! Quero renovar meu acesso ao Sonhaí.') + '" target="_blank" rel="noopener">💬 Renovar pelo WhatsApp</a>' : '') + '</section>';
+  return '<section class="card" style="background:var(--tile-out)"><h2 style="font-size:18px">⏳ Seu acesso vence ' + (conta.dias <= 0 ? 'hoje' : 'em ' + conta.dias + (conta.dias === 1 ? ' dia' : ' dias')) + '</h2><p style="margin:8px 0">Plano ' + esc(conta.planoNome) + ' até ' + C.dataBR(conta.validade) + '. Renove para continuar usando o Sonhaí sem interrupção.</p>' + botaoRenovar(sup) + '</section>';
+}
+function botaoRenovar(sup){
+  if (cfg.assinatura) return '<a class="btn sun block" href="' + esc(cfg.assinatura) + '" target="_blank" rel="noopener">💳 Renovar agora</a>';
+  return sup ? '<a class="btn sun block" href="https://wa.me/' + sup + '?text=' + encodeURIComponent('Olá! Quero renovar meu acesso ao Sonhaí.') + '" target="_blank" rel="noopener">💬 Renovar pelo WhatsApp</a>' : '';
 }
 function avisoLembretes(){
   if (!SERVER || !conta || conta.canal || conta.expirado || !cfg.telegram || S.perfil.guiaPassos) return '';
@@ -2693,6 +2852,7 @@ if (SERVER) {
   (async () => {
     try { cfg = await (await fetch('/api/config')).json(); } catch(e){}
     if (codAcesso) { try { infoAcesso = await (await fetch('/api/acesso?c=' + encodeURIComponent(codAcesso))).json(); if (infoAcesso.erro) { toast(infoAcesso.erro); infoAcesso = null; } else { token = ''; try { localStorage.removeItem('cc-token'); } catch(e){} } } catch(e){} }
+    if (codEntrada) { try { const j = await api('/api/entrar', { codigo: codEntrada }); token = j.token; localStorage.setItem('cc-token', token); localStorage.removeItem(KEY); } catch(e){ toast(e.message); } }
     if (token) iniciarConta(true); else telaEntrar('entrar');
   })();
 }

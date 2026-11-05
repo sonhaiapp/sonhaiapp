@@ -280,10 +280,16 @@
         const acao = { tipo: 'sonho', valor: p.valor, data: p.data, investir: p.investir, sonhoId: alvo ? alvo.id : undefined, termo: alvo ? '' : String(texto).trim().replace(/^(novo|criar|cria|sonho|um sonho)\s+/i, '') };
         if (!alvo && n) return { ok: false, msg: 'Não achei esse número. Responda de novo, por favor. 🙂', pergunta: p };
         return aplicar(estado, acao, opts);
+      } else if (p.tipo === 'valor' && extrairValor(extensoParaNumero(t))) {
+        delete estado.pendente;
+        return conversar(estado, p.texto + ' ' + texto, opts);
       }
     }
     delete estado.pendente;
-    const acao = interpretar(texto, { hoje, categorias: estado.categorias, sonhos: estado.sonhos, cartoes: estado.cartoes, tickets: estado.tickets });
+    const ctx = { hoje, categorias: estado.categorias, sonhos: estado.sonhos, cartoes: estado.cartoes, tickets: estado.tickets };
+    const varios = separarLancamentos(texto, ctx);
+    if (varios) { const rv = lancarVarios(estado, varios, opts); rv.acao = { tipo: 'varios' }; return rv; }
+    const acao = interpretar(texto, ctx);
     if (acao.tipo === 'excluir') {
       const alvo = acharExclusao(estado, acao);
       if (!alvo.item) return { ok: false, msg: alvo.msg, acao };
@@ -295,6 +301,60 @@
     if (r.pergunta) estado.pendente = r.pergunta;
     r.acao = acao;
     return r;
+  }
+
+  /** "gastei 50 no mercado e 30 na padaria" são dois gastos. Só separa com certeza; na dúvida, segue como uma frase. */
+  function separarLancamentos(texto, opts) {
+    const original = String(texto || '').trim();
+    const norm = extensoParaNumero(sem(original));
+    if (/\b\d{1,2}\s*(x|vezes|parcelas?)\b/.test(norm)) return null;
+    const base = norm === sem(original) ? original : norm; // mantém os acentos quando dá
+    let partes = base.split(/\s*[;,]\s+|\s+e\s+|\s+mais\s+|\s+depois\s+/i).map((x) => x.trim()).filter(Boolean);
+    if (partes.length < 2) partes = paresSemSeparador(base);
+    if (!partes || partes.length < 2 || partes.length > 5) return null;
+    const verbo = (base.match(/^\s*(?:eu\s+)?(gastei|gastamos|paguei|pagamos|comprei|compramos|recebi|recebemos|ganhei)\b/i) || [])[1];
+    const hoje = opts.hoje || new Date();
+    const dataGeral = extrairData(norm, hoje, 'passado');
+    const acoes = [];
+    for (const p of partes) {
+      const frase = verbo && !new RegExp('\\b' + sem(verbo) + '\\b').test(sem(p)) && !/\b(gastei|paguei|comprei|recebi|ganhei)\b/.test(sem(p)) ? verbo + ' ' + p : p;
+      const v = extrairValor(extensoParaNumero(sem(frase)));
+      if (!v || !(v.moeda || v.pts >= 0)) return null;
+      const a = interpretar(frase, opts);
+      if (a.tipo !== 'gasto' && a.tipo !== 'entrada') return null;
+      if (!a.desc || (a.tipo === 'gasto' && a.cat === 'Outros' && a.desc === 'Outros')) return null;
+      if (dataGeral && a.data === iso(hoje)) a.data = dataGeral.data;
+      acoes.push(a);
+    }
+    // "... e 30 na padaria no cartão Nubank": a forma de pagamento citada no fim vale para todos
+    const ult = acoes[acoes.length - 1];
+    if (ult.tipo === 'gasto' && (ult.cartao || ult.ticket || ult.pagamento)) for (const a of acoes) if (a.tipo === 'gasto' && !a.cartao && !a.ticket && !a.pagamento) { a.cartao = ult.cartao; a.ticket = ult.ticket; a.pagamento = ult.pagamento; if (ult.cartao || ult.ticket) a.paguei = false; }
+    return acoes;
+  }
+  /** "mercado 50 padaria 30": pares de nome e valor, sem verbo, vírgula ou "e". */
+  function paresSemSeparador(b) {
+    const par = '(?:[^\\d\\s]+\\s+){1,3}\\d+(?:[.,]\\d{1,2})?(?:\\s+reais)?';
+    if (!new RegExp('^' + par + '(?:\\s+' + par + ')+$', 'i').test(b)) return null;
+    const pares = b.match(new RegExp(par, 'gi')).map((x) => x.trim());
+    const tn = sem(b);
+    if (/^(gastei|gastamos|paguei|pagamos|comprei|compramos|abasteci)\b/.test(tn)) return null;
+    if (pares.some((p) => /\b(para|pra|por|de|com|em|dia|as)\b/.test(sem(p)) || UNIDADES.test(sem(p)))) return null;
+    return pares;
+  }
+  /** Lança tudo de uma vez; "desfazer" volta o conjunto. */
+  function lancarVarios(estado, acoes, opts) {
+    const rs = acoes.map((a) => aplicar(estado, a, opts));
+    const k = rs.filter((r) => r.podeDesfazer).length;
+    if (k > 1) {
+      const blocos = estado.desfazer.splice(-k);
+      const vistos = new Set(); const alterados = [];
+      for (const b of blocos) for (const x of b.alterados) { const c = x.col + ':' + x.item.id; if (!vistos.has(c)) { vistos.add(c); alterados.push(x); } }
+      estado.desfazer.push({ criados: blocos.flatMap((b) => b.criados), alterados, removidos: blocos.flatMap((b) => b.removidos), rotulo: acoes.length + ' lançamentos', em: Date.now() });
+    }
+    const linhas = acoes.map((a) => `• ${a.desc && a.desc !== a.cat ? a.desc : a.cat}: ${brl(a.valor)}${a.tipo === 'entrada' ? ' (entrada)' : ''}`);
+    const gastos = acoes.filter((a) => a.tipo === 'gasto');
+    const aviso = (rs[rs.length - 1].msg || '').split('\n').filter((l) => /orçamento/i.test(l)).pop();
+    return { ok: rs.every((r) => r.ok), colecao: 'lancamentos', podeDesfazer: k > 0, msg: `✅ Anotei ${acoes.length} lançamentos:\n${linhas.join('\n')}${gastos.length > 1 ? `\nTotal: ${brl(gastos.reduce((q, a) => q + a.valor, 0))}` : ''}${aviso ? '\n' + aviso : ''}` };
   }
 
   // ------------------------------------------------------------------ cartões
@@ -492,6 +552,16 @@
     if (/\b(desfaz|desfazer|desfaca|volta o ultimo|cancela o ultimo|apaga o ultimo|exclui o ultimo|exclua o ultimo|remove o ultimo)\b/.test(t) && !/\d/.test(t)) return { tipo: 'desfazer' };
     const tk = detectarTicket(t, opts.tickets);
     if (tk && /\b(saldo|quanto|extrato|como esta|mostra|qual)\b/.test(t) && !(extrairValor(t) && (COMPRA_TICKET.test(t) || CREDITO_FORTE.test(t) || CREDITO_FRACO.test(t)))) return { tipo: 'ver_ticket', ticket: tk };
+    if (/^(muito )?(obrigad[oa]|brigad[oa]|valeu|vlw|show|beleza|blz|ok|okay|perfeito|otimo|legal|top|boa|entendi|combinado)\b/.test(t) && !extrairValor(t)) return { tipo: 'conversa', msg: 'Por nada! Estou aqui sempre que precisar. 💙' };
+    if (/^(tudo bem|tudo bom|td bem|como vai|como voce esta|e ai)\b/.test(t) && !extrairValor(t)) return { tipo: 'conversa', msg: 'Tudo ótimo por aqui! 💙 Me conta: gastou alguma coisa hoje?' };
+    if (!tk && /\bquanto (eu )?(ainda )?posso gastar\b/.test(t) && !extrairValor(t)) return { tipo: 'quanto_posso' };
+    if (!tk && /\b(maior gasto|gastei mais|mais gastei|gasto mais|mais gasto)\b/.test(t) && !extrairValor(t)) return { tipo: 'maior_gasto' };
+    const consulta = !tk && t.match(/\bquanto (?:eu )?(?:ja )?(?:gastei|gastamos|paguei)\s+(?:com|de|em|no|na|nos|nas)\s+(.+)$/);
+    if (consulta && !extrairValor(t)) {
+      const passado = /\bmes passado\b/.test(consulta[1]);
+      const termoC = consulta[1].replace(/\b(?:n?este|n?esse|no|em)?\s*mes(?:\s+passado)?\b|\bate agora\b|\bhoje\b|\bo\b|\ba\b|\bos\b|\bas\b|[?!.]/g, ' ').replace(/\s+/g, ' ').trim();
+      if (termoC) { const catC = adivinharCategoria(termoC, opts.categorias); return { tipo: 'consulta_gasto', termo: termoC, cat: catC === 'Outros' ? '' : catC, ym: somaMes(mesDe(iso(hoje)), passado ? -1 : 0) }; }
+    }
     if (!tk && /\b(quanto (eu )?(ja )?gastei|quanto (me )?(sobrou|sobra|resta)|quanto (eu )?(tenho|posso gastar)|resumo|saldo|como (estou|esta|to|ta)|balanco|extrato|meu mes)\b/.test(t)) return { tipo: 'resumo' };
     if (/\b(contas? (a|pra|para) (pagar|vencer)|o que vence|quais contas|contas da semana|contas pendentes|boletos)\b/.test(t) && !extrairValor(t)) return { tipo: 'contas_pendentes' };
     if (/\b(agenda|compromissos? (de )?hoje|meus compromissos|o que tenho hoje)\b/.test(t) && !/\b(marca|marcar|agenda[r]? (uma|um|o|a)|lembra)/.test(t)) return { tipo: 'agenda_hoje' };
@@ -553,7 +623,8 @@
     // PLANO ou PERGUNTA: "vale a pena comprar uma TV de 2000" não é um gasto
     const quer = /\b(vale a pena|sera que|posso|devo|deveria|quero|queremos|queria|gostaria|pretendo|planejo|vou|vamos|preciso|pensando em|penso em|se eu)\b/.test(t);
     const verboPlano = /\b(compr\w*|gast\w*|pag\w*|guard\w*|junt\w*|invest\w*|poup\w*|econom\w*|troc\w*|viaj\w*|parcel\w*)\b/.test(t);
-    if (val && !fatoFeito.test(t) && !/\b(vence|vencimento|lembr\w*|agend\w*|boleto)\b/.test(t) && ((quer && verboPlano) || /\?\s*$/.test(original))) return { tipo: 'plano', texto: original };
+    const vaiPagar = /\b(tenho que|preciso|vou ter que) pagar\b/.test(t) && /\bdia\s+\d{1,2}\b/.test(t);
+    if (val && !fatoFeito.test(t) && !vaiPagar && !/\b(vence|vencimento|lembr\w*|agend\w*|boleto)\b/.test(t) && ((quer && verboPlano) || /\?\s*$/.test(original))) return { tipo: 'plano', texto: original };
 
     // TICKET: crédito sobe o saldo, compra desce. Sem verbo ("mercado 50 no ticket") é compra, como no resto do app.
     if (tk) {
@@ -569,7 +640,7 @@
     }
 
     // SONHO (guardar / investir / cofrinho)
-    const verboGuardar = /\b(guard(ei|ar|e|a|amos)|junt(ei|ar|e|a)|poup(ei|ar|e|a)|economiz(ei|ar)|separ(ei|ar|e|a)|reserv(ei|ar|e)|invest(i|ir|e|a|imos)|deposit(ei|ar|e|a)|apliq(uei)|aplic(ar|a|ou)|cofrinho|caixinha)\b/;
+    const verboGuardar = /\b(guard(ei|ar|e|a|amos)|junt(ei|ar|e|a)|poup(ei|ar|e|a)|economiz(ei|ar)|separ(ei|ar|e|a)|reserv(ei|ar|e)|invest(i|ir|e|a|imos)|deposit(ei|ar|e|a)|apliq(uei)|aplic(ar|a|ou)|cofrinho|caixinha)\b|\b(coloquei|botei)\b.*\b(poupanca|reserva|sonho)\b/;
     const soReservou = /\breserv(ei|ar|e)\b/.test(t) && !/\b(guard|junt|poup|economiz|separ|invest|deposit|aplic|cofrinho|caixinha)/.test(t) && !/\b(para|pra|pro)\b/.test(t); // "reservei o hotel 500" é gasto
     if (val && verboGuardar.test(t) && !soReservou && !/\b(gastei|comprei|paguei|guarda.?roupa|guarda.?chuva)\b/.test(t)) {
       const restoOrig = (limparDescricao(original, [val.trecho, dt && dt.trecho, 'guardei', 'guardar', 'guarde', 'guarda', 'juntei', 'juntar', 'poupei', 'poupar', 'economizei', 'separei', 'separar', 'reservei', 'reservar', 'investi', 'investir', 'invista', 'depositei', 'depositar', 'apliquei', 'aplicar', 'coloquei', 'colocar', 'coloca', 'coloque', 'botei', 'sonho', 'meu', 'minha', 'nosso', 'nossa', 'dinheiro', 'valor'])) || '';
@@ -611,7 +682,7 @@
     const ehCompromisso = /\b(compromisso|consulta|reuniao|lembr\w*|agend\w*|marc\w*|dentista|medico|aniversario|encontro|visita|entrevista|exame|buscar|levar|ligar para|evento|festa|curso)\b/.test(t);
     const ehConta = /\b(conta|boleto|fatura|vence|vencimento|mensalidade|todo dia|todo mes|mensal)\b/.test(t);
     // "conta do restaurante 120" é um gasto; conta fixa precisa de sinal de vencimento
-    const contaFixa = ehConta && (/\b(vence|vencimento|boleto|mensalidade|todo dia|todo mes|mensal)\b/.test(t) || (/\bdia\s+\d{1,2}\b/.test(t) && !/\b(deu|ficou|saiu|custou|dividi|dividimos|rachei|rachamos)\b/.test(t)));
+    const contaFixa = vaiPagar || (ehConta && (/\b(vence|vencimento|boleto|mensalidade|todo dia|todo mes|mensal)\b/.test(t) || (/\bdia\s+\d{1,2}\b/.test(t) && !/\b(deu|ficou|saiu|custou|dividi|dividimos|rachei|rachamos)\b/.test(t))));
     if (ehCompromisso && (!val || (hr && !/\b(paguei|gastei|comprei)\b/.test(t))) && !(ehConta && val)) {
       const titulo = limparDescricao(original, [dtF && dtF.trecho, hr && hr.trecho, 'compromisso', 'me lembra', 'me lembre', 'lembrete', 'lembrar', 'agendar', 'agenda', 'marcar', 'marca', 'tenho', 'vou ter', 'vou', 'que', 'de', 'as', 'às', 'horas', 'hora', 'amanhã', 'hoje']) || 'Compromisso';
       return { tipo: 'compromisso', titulo, data: dtF ? dtF.data : iso(hoje), hora: hr ? hr.hora : '', valor: val ? val.valor : null };
@@ -621,13 +692,14 @@
     if (contaFixa && !/\b(paguei|gastei)\b/.test(t)) {
       const diaM = t.match(/\bdia\s+(\d{1,2})\b/);
       const dia = diaM ? +diaM[1] : (dtF ? +dtF.data.slice(8, 10) : null);
-      const nome = limparDescricao(original, [val && val.trecho, dtF && dtF.trecho, diaM && diaM[0], 'conta de', 'conta do', 'conta da', 'conta', 'boleto', 'fatura', 'vence', 'vencimento', 'todo', 'mes', 'mês', 'mensal', 'cadastra', 'cadastrar', 'nova', 'tenho', 'que', 'pagar', 'valor']) || 'Conta';
+      const nome = limparDescricao(original, [val && val.trecho, dtF && dtF.trecho, diaM && diaM[0], 'conta de', 'conta do', 'conta da', 'conta', 'boleto', 'fatura', 'vence', 'vencimento', 'todo', 'mes', 'mês', 'mensal', 'cadastra', 'cadastrar', 'nova', 'tenho', 'preciso', 'vou ter', 'que', 'pagar', 'valor']) || 'Conta';
       const recorrente = !/\b(so esse mes|uma vez|unica)\b/.test(t);
       return { tipo: 'conta', nome, valor: val ? val.valor : 0, dia: Math.max(1, Math.min(31, dia || hoje.getDate())), cat: adivinharCategoria(t + ' ' + sem(nome), opts.categorias) === 'Outros' ? 'Contas da Casa' : adivinharCategoria(t + ' ' + sem(nome), opts.categorias), recorrente, vencimento: dtF && !diaM ? dtF.data : null };
     }
 
     if (!val) {
       if (/\bpaguei\b/.test(t)) return { tipo: 'pagar_conta', chave: t, data: dt ? dt.data : iso(hoje) };
+      if (/\b(gastei|gastamos|comprei|compramos|abasteci|almocei|jantei|fui (ao|no|na))\b/.test(t)) return { tipo: 'falta_valor', texto: original };
       return { tipo: 'desconhecido', texto: original };
     }
 
@@ -686,10 +758,30 @@
     }
     return o;
   }
+  const limpaEmoji = (e) => String(e == null ? '' : e).replace(/[<>"'&`]/g, '').slice(0, 8);
+  const corValida = (c, padrao) => (/^#[0-9a-f]{3,8}$/i.test(c) ? c : padrao);
+  const COLS_ITENS = ['lancamentos', 'contas', 'rendas', 'parcelados', 'cartoes', 'tickets', 'recargas', 'anuais', 'sonhos', 'dividas', 'agenda'];
+  /** Corrige o que chega de fora (app antigo, backup ou requisição forjada) antes de ser usado. */
   function sanearEstado(estado) {
     if (!estado || typeof estado !== 'object') return estado;
-    for (const col of ['lancamentos', 'contas', 'rendas', 'parcelados', 'cartoes', 'tickets', 'recargas', 'anuais', 'sonhos', 'dividas', 'agenda', 'categorias']) if (Array.isArray(estado[col])) estado[col].forEach((x) => sanearItem(x));
-    if (estado.perfil) sanearItem(estado.perfil);
+    if (!estado.perfil || typeof estado.perfil !== 'object' || Array.isArray(estado.perfil)) estado.perfil = {};
+    const pf = estado.perfil;
+    if (typeof pf.nome !== 'string') pf.nome = '';
+    if (typeof pf.whatsapp !== 'string') pf.whatsapp = String(pf.whatsapp == null ? '' : pf.whatsapp);
+    if (!/^\d{2}:\d{2}$/.test(pf.lembreteHora || '')) pf.lembreteHora = '08:00';
+    pf.orcamento = Number(pf.orcamento) || 0; pf.saldoInicial = Number(pf.saldoInicial) || 0;
+    if (Number(estado.perfilUpd) > Date.now() + 864e5) estado.perfilUpd = Date.now();
+    for (const col of COLS_ITENS) estado[col] = Array.isArray(estado[col]) ? estado[col].filter((x) => x && typeof x === 'object' && !Array.isArray(x) && x.id) : [];
+    if (!Array.isArray(estado.categorias) || !estado.categorias.length) estado.categorias = CATEGORIAS.map((c) => ({ nome: c.nome, emoji: c.emoji, cor: c.cor, limite: 0 }));
+    estado.categorias = estado.categorias.filter((c) => c && typeof c === 'object' && !Array.isArray(c)).map((c) => Object.assign(c, { nome: String(c.nome == null ? '' : c.nome), emoji: limpaEmoji(c.emoji), cor: corValida(c.cor, '#9AA3AF') }));
+    if (!Array.isArray(estado.excluidos)) estado.excluidos = [];
+    for (const col of COLS_ITENS.concat('categorias')) estado[col].forEach((x) => sanearItem(x));
+    for (const col of ['lancamentos', 'recargas', 'agenda']) for (const x of estado[col]) if (!/^\d{4}-\d{2}-\d{2}$/.test(x.data || '')) x.data = iso(new Date());
+    for (const a of estado.agenda) if (a.hora && !/^\d{2}:\d{2}$/.test(a.hora)) a.hora = '';
+    for (const x of estado.sonhos) { x.emoji = limpaEmoji(x.emoji); if (!Array.isArray(x.aportes)) x.aportes = []; }
+    for (const x of estado.cartoes) x.cor = corValida(x.cor, '#1B3A6B');
+    for (const x of estado.tickets) x.cor = corValida(x.cor, COR_TICKET);
+    sanearItem(pf);
     if (Array.isArray(estado.chat)) estado.chat = estado.chat.slice(-200).map((m) => ({ de: m.de === 'me' ? 'me' : 'bot', txt: String(m.txt || '').slice(0, 4000), em: +m.em || 0 }));
     return estado;
   }
@@ -753,6 +845,7 @@
     for (const x of u.alterados) {
       const lista = estado[x.col] = estado[x.col] || [];
       const i = lista.findIndex((y) => y.id === x.item.id);
+      if (x.col === 'sonhos' && i >= 0) { const volta = new Set((x.item.aportes || []).map((ap) => ap.id)); for (const ap of lista[i].aportes || []) if (!volta.has(ap.id)) marcarExcluido(estado, ap.id, 'aportes'); }
       const item = Object.assign({}, x.item, { upd: now });
       if (i >= 0) lista[i] = item; else lista.push(item);
     }
@@ -901,6 +994,29 @@
         else { s = { id: uid(), nome: acao.nome, emoji: '⭐', custo: acao.valor, prazo: '', guardadoAntes: 0, aportes: [], upd: now }; estado.sonhos.push(s); criado = true; }
         return { ok: true, item: s, colecao: 'sonhos', msg: `🌈 ${criado ? 'Sonho criado' : 'Meta atualizada'}: *${s.nome}*, ${brl(acao.valor)}. Quando guardar, me diga: "guardei 200 para ${s.nome.toLowerCase()}". ⭐` };
       }
+      case 'conversa': return { ok: true, msg: acao.msg };
+      case 'falta_valor': return { ok: false, pergunta: { tipo: 'valor', texto: acao.texto, em: now }, msg: 'Quanto foi? 🙂 É só me mandar o valor.' };
+      case 'quanto_posso': {
+        const ymQ = mesDe(iso(hoje)); const rq = resumoMes(estado, ymQ);
+        const temOrc = Number(estado.perfil && estado.perfil.orcamento) > 0;
+        if (!temOrc && !rq.entradas) return { ok: true, msg: '🌱 Ainda não sei a sua renda deste mês. Me diga: "meu salário é 3500 todo dia 5" ou "orçamento 3000".' };
+        const livre = centavos(temOrc ? rq.orcamento - rq.gastoTotal : rq.sobra);
+        const dias = diasNoMes(ymQ) - hoje.getDate() + 1;
+        if (livre <= 0) return { ok: true, msg: `💛 O ${temOrc ? 'orçamento' : 'dinheiro'} deste mês já acabou${livre < 0 ? ` e passou ${brl(-livre)}` : ''}. Vamos segurar até o mês virar?` };
+        return { ok: true, msg: `💵 Até o fim do mês, você ainda pode gastar ${brl(livre)}.\nDá ${brl(Math.floor(livre / dias * 100) / 100)} por dia, contando hoje (${dias} ${dias === 1 ? 'dia' : 'dias'}).` };
+      }
+      case 'maior_gasto': {
+        const ymM = mesDe(iso(hoje)); const rm = resumoMes(estado, ymM);
+        if (!rm.maiorCategoria) return { ok: true, msg: `🌱 Ainda não há gastos em ${nomeMes(ymM)}.` };
+        const totM = Object.values(rm.porCategoria).reduce((q, w) => q + w, 0);
+        return { ok: true, msg: `🔝 Seu maior gasto em ${nomeMes(ymM)} é *${rm.maiorCategoria.nome}*: ${brl(rm.maiorCategoria.valor)} (${Math.round(rm.maiorCategoria.valor / totM * 100)}% do total).` };
+      }
+      case 'consulta_gasto': {
+        const achados = (estado.lancamentos || []).filter((l) => l.tipo === 'gasto' && mesDe(l.data) === acao.ym && (acao.cat ? l.cat === acao.cat : sem(l.desc + ' ' + l.cat).includes(acao.termo)));
+        const totC = acao.cat ? centavos(resumoMes(estado, acao.ym).porCategoria[acao.cat] || 0) : centavos(somaValor(achados));
+        if (!totC) return { ok: true, msg: `🔎 Não achei gastos com ${acao.cat || acao.termo} em ${nomeMes(acao.ym)}.` };
+        return { ok: true, msg: `🔎 Em ${nomeMes(acao.ym)} você gastou ${brl(totC)} com *${acao.cat || acao.termo}*${achados.length ? ` (${achados.length} ${achados.length === 1 ? 'lançamento' : 'lançamentos'})` : ''}.` };
+      }
       case 'plano': return { ok: true, msg: acao.msg || '💭 Entendi isso como um plano ou uma pergunta, então não lancei nada.\nQuando acontecer, me diga: "comprei ...", "paguei ..." ou "guardei ...".' };
       case 'compromisso': {
         const item = { id: uid(), titulo: acao.titulo, data: acao.data, hora: acao.hora || '', lembrar: true, feito: false, origem, upd: now };
@@ -1013,9 +1129,12 @@
   function remover(estado, col, id) {
     if (col === 'lancamentos') {
       const l = (estado.lancamentos || []).find((x) => x.id === id);
-      if (l && l.sonhoId) { const sn = (estado.sonhos || []).find((x) => x.id === l.sonhoId); if (sn) { sn.aportes = (sn.aportes || []).filter((ap) => ap.entradaId !== id); sn.upd = Date.now(); } }
+      if (l && l.sonhoId) { const sn = (estado.sonhos || []).find((x) => x.id === l.sonhoId); if (sn) { for (const ap of sn.aportes || []) if (ap.entradaId === id) marcarExcluido(estado, ap.id, 'aportes'); sn.aportes = (sn.aportes || []).filter((ap) => ap.entradaId !== id); sn.upd = Date.now(); } }
     }
     estado[col] = (estado[col] || []).filter((x) => x.id !== id);
+    marcarExcluido(estado, id, col);
+  }
+  function marcarExcluido(estado, id, col) {
     estado.excluidos = estado.excluidos || [];
     estado.excluidos.push({ id, col, em: Date.now() });
     if (estado.excluidos.length > 2000) estado.excluidos = estado.excluidos.slice(-2000);
@@ -1143,7 +1262,7 @@
     // saldo acumulado
     let saldoAcum = Number(estado.perfil && estado.perfil.saldoInicial) || 0;
     const meses = mesesComDados(estado);
-    for (const m of meses) { if (m > ym) break; if (m === ym) continue; const r = resumoSimples(estado, m); saldoAcum += r; }
+    if (meses.length) for (let m = meses[0], i = 0; m < ym && i < 600; m = somaMes(m, 1), i++) saldoAcum += resumoSimples(estado, m);
     saldoAcum += sobra;
     const maior = Object.entries(porCategoria).sort((a, b) => b[1] - a[1])[0];
     return {
@@ -1151,7 +1270,7 @@
       pctOrcamento: orcamento > 0 ? gastoTotal / orcamento : 0, pctGuardado: entradas > 0 ? guardado / entradas : 0,
       maiorCategoria: maior ? { nome: maior[0], valor: maior[1] } : null, anuaisMes, lancamentos: L,
       // dinheiro que já saiu de fato: gastos pagos (dinheiro, pix, débito), contas pagas, faturas pagas e o que foi guardado
-      jaSaiu: (() => { const g = L.filter((l) => l.tipo === 'gasto' && !l.ticket && !l.cartaoId && l.pagamento !== 'Cartão').reduce((a, b) => a + b.valor, 0); const fat = (estado.cartoes || []).reduce((a, c) => { const f = fatura(estado, c.id, ym); return a + (f ? f.pago : 0); }, 0); const parcSem = parcs.filter((x) => !x.p.cartaoId && x.p.pagos && x.p.pagos[ym]).reduce((a, b) => a + b.p.valor, 0); return g + fixasPagas + fat + parcSem + guardado; })()
+      jaSaiu: (() => { const g = L.filter((l) => l.tipo === 'gasto' && !l.ticket && !l.cartaoId && l.pagamento !== 'Cartão').reduce((a, b) => a + b.valor, 0); const fat = (estado.cartoes || []).reduce((a, c) => a + Object.entries(c.faturas || {}).reduce((q, [ymF, reg]) => { if (!reg || (reg.em ? mesDe(iso(new Date(reg.em))) : ymF) !== ym) return q; const f = fatura(estado, c.id, ymF); return q + (f ? f.pago : 0); }, 0), 0); const parcSem = parcs.filter((x) => !x.p.cartaoId && x.p.pagos && x.p.pagos[ym]).reduce((a, b) => a + b.p.valor, 0); return g + fixasPagas + fat + parcSem + guardado; })()
     };
   }
   function resumoSimples(estado, ym) {
@@ -1221,7 +1340,7 @@
   }
   function textoAjuda(estado) {
     const n = estado.perfil && estado.perfil.nome ? ', ' + estado.perfil.nome.split(' ')[0] : '';
-    return `Oi${n}! 💙 Eu sou o *Sonhaí*, seu parceiro das finanças.\n\nVocê pode me mandar texto ou áudio:\n🛒 "gastei 45,90 no mercado"\n💰 "recebi 3500 de salário"\n🔁 "meu salário é 3500 todo dia 5"\n🛍️ "comprei uma TV de 2000 em 10x no cartão Nubank"\n💳 "gastei 10 na lanchonete no cartão de crédito Itaú"\n💳 "paguei a fatura do Itaú" • "paguei 500 da fatura do Bradesco"\n🎟️ "caiu 800 no ticket" • "gastei 50 no mercado no ticket" • "saldo do ticket"\n🗓️ "conta de luz vence dia 10, 150 reais"\n📌 "dentista quinta às 14h"\n⭐ "guardei 200 para a viagem" • "investi 500"\n🌈 "meta de 10000 para o carro"\n💸 "retire 500 da reserva de emergência e coloque como renda"\n🔁 "transfere 300 da reserva para a viagem"\n🗑️ "exclui o gasto de 45,90"\n↩️ "desfazer"\n📊 "resumo" • "contas a pagar" • "agenda"`;
+    return `Oi${n}! 💙 Eu sou o *Sonhaí*, seu parceiro das finanças.\n\nVocê pode me mandar texto ou áudio:\n🛒 "gastei 45,90 no mercado"\n🛒 "gastei 50 no mercado e 30 na padaria"\n💰 "recebi 3500 de salário"\n🔁 "meu salário é 3500 todo dia 5"\n🛍️ "comprei uma TV de 2000 em 10x no cartão Nubank"\n💳 "gastei 10 na lanchonete no cartão de crédito Itaú"\n💳 "paguei a fatura do Itaú" • "paguei 500 da fatura do Bradesco"\n🎟️ "caiu 800 no ticket" • "gastei 50 no mercado no ticket" • "saldo do ticket"\n🗓️ "conta de luz vence dia 10, 150 reais"\n📌 "dentista quinta às 14h"\n⭐ "guardei 200 para a viagem" • "investi 500"\n🌈 "meta de 10000 para o carro"\n💸 "retire 500 da reserva de emergência e coloque como renda"\n🔁 "transfere 300 da reserva para a viagem"\n🗑️ "exclui o gasto de 45,90"\n↩️ "desfazer"\n📊 "resumo" • "contas a pagar" • "agenda"\n🔎 "quanto gastei com mercado" • "quanto posso gastar hoje" • "qual meu maior gasto"`;
   }
   function barra(p) { const n = Math.max(0, Math.min(10, Math.round(p * 10))); return '🟩'.repeat(Math.min(n, 7)) + (n > 7 ? '🟨'.repeat(Math.min(n - 7, 2)) : '') + (n > 9 ? '🟥' : '') + '⬜'.repeat(10 - n); }
   function mensagemHumor(r) {
@@ -1302,6 +1421,12 @@
       }
       out[col] = Object.values(mapa);
     }
+    // cada dinheiro guardado é um registro: o que entrou em dois aparelhos soma, nunca sobrescreve
+    for (const s of out.sonhos || []) {
+      const porId = new Map();
+      for (const lado of [a, b]) { const c = (lado.sonhos || []).find((x) => x && x.id === s.id); for (const ap of (c && Array.isArray(c.aportes) && c.aportes) || []) if (ap && ap.id && !exc.has(ap.id)) porId.set(ap.id, ap); }
+      s.aportes = (Array.isArray(s.aportes) ? s.aportes : []).filter((ap) => ap && !ap.id).concat([...porId.values()].sort((x, y) => String(x.data).localeCompare(String(y.data))));
+    }
     if ((b.perfilUpd || 0) > (a.perfilUpd || 0)) { out.perfil = b.perfil; out.perfilUpd = b.perfilUpd; }
     out.chat = (b.chat || a.chat || []).slice(-200);
     return out;
@@ -1311,7 +1436,7 @@
     CATEGORIAS, TIPOS_ENTRADA, INCENTIVOS, MESES, sem, uid, iso, pad, brl, dataBR, mesDe, nomeMes, mesCurto, somaMes, difMeses, diasNoMes, agora,
     VERSICULOS, versiculoDoDia, LIMITE_VALOR, LIMITE_TEXTO, sanearEstado, BANCOS, detectarCartao, garantirCartao, mesFatura, diaFechamento, vencFatura, fatura, pagarFatura, faturasAVencer, faturaDaVez, rotuloFatura,
     NOME_TICKET, COR_TICKET, detectarTicket, garantirTicket, saldoTicket, gastoTicketMes, extratoTicket, excluirTicket,
-    conversar, interpretar, aplicar, remover, acharExclusao, descreverAlvo, valorConta, definirValorConta, encerrarConta, garantirRendas, acharSonho, retirarDoSonho, estadoVazio, marcarPrimeiroAcesso, resumoMes, mesesComDados, parcelaNoMes, contaNoMes, contasAVencer, contasAtrasadas, totalSonho,
+    conversar, interpretar, separarLancamentos, lancarVarios, aplicar, remover, marcarExcluido, acharExclusao, descreverAlvo, valorConta, definirValorConta, encerrarConta, garantirRendas, acharSonho, retirarDoSonho, estadoVazio, marcarPrimeiroAcesso, resumoMes, mesesComDados, parcelaNoMes, contaNoMes, contasAVencer, contasAtrasadas, totalSonho,
     textoResumo, textoContas, textoAgenda, textoAjuda, mensagemHumor, barra, mesclar, adivinharCategoria, extrairValor, extrairData, extrairHora
   };
 });

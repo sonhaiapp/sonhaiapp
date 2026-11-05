@@ -14,6 +14,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const zlib = require('zlib');
 // Funciona com os arquivos todos soltos na mesma pasta (upload pelo GitHub) ou na pasta public/.
 // Os soltos têm prioridade: são sempre os da atualização mais recente.
 const PUB = fs.existsSync(path.join(__dirname, 'index.html')) ? __dirname : path.join(__dirname, 'public');
@@ -52,6 +53,8 @@ const CFG = {
   contato: process.env.CONTATO_EMAIL || '',
   // dias que os dados ficam guardados depois que o acesso vence
   retencao: Math.max(30, +process.env.DIAS_RETENCAO || 90),
+  // link da página de pagamento: aparece nos botões de renovar
+  assinatura: /^https:\/\//.test(process.env.LINK_ASSINATURA || '') ? process.env.LINK_ASSINATURA : '',
   openai: process.env.OPENAI_API_KEY || '',
   groq: process.env.GROQ_API_KEY || '',
   modeloAudio: process.env.TRANSCRIBE_MODEL || '',
@@ -95,7 +98,7 @@ async function carregarDB() {
   for (;;) {
     const linhas = await sb('GET', `kv?select=chave,valor&chave=not.like.backup*&order=chave&offset=${de}&limit=${passo}`, null, 'count=none');
     for (const l of linhas) {
-      if (l.chave === 'sys') { DB.tokens = l.valor.tokens || {}; DB.resets = l.valor.resets || {}; DB.tg = l.valor.tg || {}; DB.tgcodigos = l.valor.tgcodigos || {}; DB.convites = l.valor.convites || {}; DB.config = l.valor.config || {}; DB.auditoria = l.valor.auditoria || []; }
+      if (l.chave === 'sys') { DB.tokens = l.valor.tokens || {}; DB.resets = l.valor.resets || {}; DB.tg = l.valor.tg || {}; DB.tgcodigos = l.valor.tgcodigos || {}; DB.convites = l.valor.convites || {}; DB.entradas = l.valor.entradas || {}; DB.config = l.valor.config || {}; DB.auditoria = l.valor.auditoria || []; }
       else if (l.chave.startsWith('u:')) DB.usuarios[l.chave.slice(2)] = l.valor;
       salvos.set(l.chave, JSON.stringify(l.valor));
     }
@@ -118,7 +121,7 @@ async function gravar() {
   gravando = true;
   try {
     const atual = new Map();
-    atual.set('sys', JSON.stringify({ tokens: DB.tokens, resets: DB.resets, tg: DB.tg || {}, tgcodigos: DB.tgcodigos || {}, convites: DB.convites || {}, config: DB.config || {}, auditoria: DB.auditoria || [] }));
+    atual.set('sys', JSON.stringify({ tokens: DB.tokens, resets: DB.resets, tg: DB.tg || {}, tgcodigos: DB.tgcodigos || {}, convites: DB.convites || {}, entradas: DB.entradas || {}, config: DB.config || {}, auditoria: DB.auditoria || [] }));
     for (const [k, u] of Object.entries(DB.usuarios)) if (u) atual.set('u:' + k, JSON.stringify(u));
     const mudou = [];
     for (const [k, txt] of atual) if (salvos.get(k) !== txt) mudou.push({ chave: k, valor: JSON.parse(txt), atualizado: new Date().toISOString() });
@@ -147,11 +150,16 @@ DB.usuarios = DB.usuarios || {}; DB.tokens = DB.tokens || {};
 for (const k of Object.keys(DB.usuarios)) { const nk = chaveFone(k); if (nk !== k && !DB.usuarios[nk]) { DB.usuarios[nk] = DB.usuarios[k]; delete DB.usuarios[k]; } }
 for (const [t, v] of Object.entries(DB.tokens)) if (typeof v === 'string') DB.tokens[t] = { k: chaveFone(v), em: Date.now() };
 // segurança: sessões e códigos ficam guardados só como hash (se o banco vazar, não dá para usar)
-for (const nome of ['tokens', 'resets', 'convites', 'tgcodigos']) { const o = DB[nome] || {}; const novo = {}; for (const [kk, v] of Object.entries(o)) novo[/^[0-9a-f]{64}$/.test(kk) ? kk : H(kk)] = v; DB[nome] = novo; }
+for (const nome of ['tokens', 'resets', 'convites', 'tgcodigos', 'entradas']) { const o = DB[nome] || {}; const novo = {}; for (const [kk, v] of Object.entries(o)) novo[/^[0-9a-f]{64}$/.test(kk) ? kk : H(kk)] = v; DB[nome] = novo; }
 DB.auditoria = DB.auditoria || [];
 DB.resets = DB.resets || {};
 // quem se cadastrou com o WhatsApp desligado nunca confirmou o número: não pode receber lembrete nele
 for (const u of Object.values(DB.usuarios)) if (u && u.criadoPor === 'cadastro' && u.verificado !== false && !u.ultimaMsg) { u.verificado = false; u.codigo = codigoVerif(); }
+for (const u of Object.values(DB.usuarios)) if (u && u.estado) {
+  CC.sanearEstado(u.estado);
+  // links antigos de entrada não ficam guardados na conversa
+  for (const m of u.estado.chat || []) if (m.txt && m.txt.includes('/?t=')) m.txt = m.txt.replace(/\/\?t=[\w-]+/g, '/');
+}
 }
 
 const SESSAO_DIAS = 180;
@@ -179,11 +187,11 @@ function calcValidade(plano, atual) {
 }
 const expirado = (u) => !!u && !ehAdmin(u) && !!u.validade && hojeSP() > u.validade;
 const diasRestantes = (u) => u && u.validade ? Math.round((new Date(u.validade + 'T12:00') - new Date(hojeSP() + 'T12:00')) / 864e5) : null;
-const suporte = () => { const k = [...ADMINS][0]; return normFone(process.env.SUPORTE_WHATSAPP || '') || (k && DB.usuarios[k] ? DB.usuarios[k].fone : normFone(String(process.env.ADMIN_FONES || '').split(/[,;\s]+/)[0])) || ''; };
+const suporte = () => normFone(process.env.SUPORTE_WHATSAPP || ''); // nunca o número do master: ele é o login do administrador
 const fmtFone = (f) => { const d = String(f || '').replace(/\D/g, '').replace(/^55/, ''); return d.length >= 10 ? `(${d.slice(0, 2)}) ${d.slice(2, d.length - 4)}-${d.slice(-4)}` : f; };
 /** Quantos dias faltam para apagar os dados de uma conta vencida (null: não está vencida). */
 const diasParaApagar = (u) => { if (!expirado(u)) return null; return CFG.retencao + (diasRestantes(u) || 0); };
-const msgExpirado = (u) => `⏳ Seu acesso ao Sonhaí venceu em ${CC.dataBR(u.validade)}. Para renovar, fale com o suporte${suporte() ? ' no WhatsApp ' + fmtFone(suporte()) : ''}. Seus dados ficam guardados por mais ${Math.max(0, diasParaApagar(u))} dias. Você também pode entrar no app para baixar ou excluir seus dados. 💙`;
+const msgExpirado = (u) => `⏳ Seu acesso ao Sonhaí venceu em ${CC.dataBR(u.validade)}. Para renovar, ${CFG.assinatura ? 'acesse ' + CFG.assinatura : 'fale com o suporte' + (suporte() ? ' no WhatsApp ' + fmtFone(suporte()) : '')}. Seus dados ficam guardados por mais ${Math.max(0, diasParaApagar(u))} dias. Você também pode entrar no app para baixar ou excluir seus dados. 💙`;
 const emailValido = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(e || '').trim());
 const porEmail = (e) => { e = String(e || '').trim().toLowerCase(); return e ? Object.values(DB.usuarios).find((u) => u && (u.email || '').toLowerCase() === e) : null; };
 function senhaInicial() { const L = 'abcdefghjkmnpqrstuvwxyz'; let x = ''; for (let i = 0; i < 4; i++) x += L[crypto.randomInt(L.length)]; return x + '-' + crypto.randomInt(1000, 9999); }
@@ -199,8 +207,9 @@ function auditar(req, quem, acao, alvo) {
   if (DB.auditoria.length > 500) DB.auditoria = DB.auditoria.slice(-500);
   salvarDB();
 }
-// IP real: o último endereço do X-Forwarded-For é o que o Render adiciona (os anteriores podem ser falsos)
-function ipDe(req) { const x = String(req.headers['x-forwarded-for'] || '').split(',').map((v) => v.trim()).filter(Boolean); return x.length ? x[x.length - 1] : (req.socket.remoteAddress || ''); }
+// IP real: no Render o tráfego passa pela Cloudflare, que preenche estes cabeçalhos e impede que sejam falsificados.
+// O último endereço do X-Forwarded-For é o da Cloudflare, igual para muita gente: usá-lo bloquearia todos juntos.
+function ipDe(req) { const cf = process.env.RENDER && (req.headers['true-client-ip'] || req.headers['cf-connecting-ip']); if (cf) return String(cf).trim(); const x = String(req.headers['x-forwarded-for'] || '').split(',').map((v) => v.trim()).filter(Boolean); return x.length ? x[x.length - 1] : (req.socket.remoteAddress || ''); }
 function novaSessao(u) {
   const t = crypto.randomBytes(24).toString('base64url');
   DB.tokens[H(t)] = { k: chaveFone(u.fone), em: Date.now() };
@@ -231,7 +240,7 @@ function usuarioWhatsApp(fone) {
 /** Apaga a conta e tudo o que aponta para ela. Os backups somem sozinhos em até 3 dias. */
 function apagarConta(u) {
   const k = chaveFone(u.fone);
-  for (const nome of ['tokens', 'convites', 'resets', 'tgcodigos']) for (const [c, v] of Object.entries(DB[nome] || {})) if (v.k === k) delete DB[nome][c];
+  for (const nome of ['tokens', 'convites', 'resets', 'tgcodigos', 'entradas']) for (const [c, v] of Object.entries(DB[nome] || {})) if (v.k === k) delete DB[nome][c];
   if (u.telegram && DB.tg) delete DB.tg[u.telegram];
   delete DB.usuarios[k];
   salvarDB();
@@ -261,7 +270,22 @@ const tentativas = new Map();
 function bloqueado(chave, max) { const x = tentativas.get(chave); return x && x.n >= max && Date.now() - x.em < 15 * 60e3; }
 function errou(chave) { const x = tentativas.get(chave); if (!x || Date.now() - x.em > 15 * 60e3) tentativas.set(chave, { n: 1, em: Date.now() }); else x.n++; }
 const codigoVerif = () => String(crypto.randomInt(1000, 9999));
-function linkEntrada(u) { return `${CFG.url}/?t=${novaSessao(u)}`; }
+/** Link de entrada: vale uma vez, por 24 horas. A sessão só nasce quando a pessoa abre, e nada fica salvo em texto. */
+function linkEntrada(u) {
+  DB.entradas = DB.entradas || {};
+  const cod = crypto.randomBytes(18).toString('base64url');
+  DB.entradas[H(cod)] = { k: chaveFone(u.fone), em: Date.now() }; salvarDB();
+  return `${CFG.url}/?e=${cod}`;
+}
+const mensagensVistas = new Map();
+/** O WhatsApp e o Telegram podem entregar a mesma mensagem duas vezes: sem isto, o gasto seria lançado em dobro. */
+function jaVista(id) {
+  if (!id) return false;
+  if (mensagensVistas.has(id)) return true;
+  mensagensVistas.set(id, Date.now());
+  if (mensagensVistas.size > 20000) for (const k of mensagensVistas.keys()) { mensagensVistas.delete(k); if (mensagensVistas.size <= 10000) break; }
+  return false;
+}
 
 // ------------------------------------------------------------------ WhatsApp
 async function waApi(caminho, corpo) {
@@ -428,7 +452,7 @@ async function receber(fone, texto, origemAudio) {
   }
   if (novo) {
     u.estado.chat.push({ de: 'me', txt: texto, em: Date.now() });
-    await enviar(u, `Olá! 💙 Que alegria ter você aqui.\nEu sou o *Sonhaí* e vou te ajudar a organizar o dinheiro sem complicação.${u.validade ? `\n\n🎁 Você tem acesso grátis até ${CC.dataBR(u.validade)}.` : ''}\n\n📲 Abra seu app e crie sua senha:\n${linkEntrada(u)}\n\nAo continuar, você concorda com os Termos (${CFG.url}/termos.html) e a Política de Privacidade (${CFG.url}/privacidade.html).\n\nComo você gostaria de ser chamado(a)? Responda: "meu nome é ..."`, zap);
+    await enviar(u, `Olá! 💙 Que alegria ter você aqui.\nEu sou o *Sonhaí* e vou te ajudar a organizar o dinheiro sem complicação.${u.validade ? `\n\n🎁 Você tem acesso grátis até ${CC.dataBR(u.validade)}.` : ''}\n\n📲 Abra seu app e crie sua senha:\n${linkEntrada(u)}\n\nAo continuar, você concorda com os Termos (${CFG.url}/termos.html) e a Política de Privacidade (${CFG.url}/privacidade.html).\n\nComo você gostaria de ser chamado(a)? Responda: "meu nome é ..."`, { canal: 'whatsapp', semChat: true });
     if (/^(oi|ola|bom dia|boa tarde|boa noite|comecar|começar)\b/.test(t0)) return;
   }
   return processar(u, texto, origemAudio, 'whatsapp');
@@ -460,7 +484,7 @@ async function processar(u, texto, origemAudio, canal) {
     u.estado.perfil.nome = nome.charAt(0).toUpperCase() + nome.slice(1); u.estado.perfilUpd = Date.now(); u.rev++;
     return env(`Prazer, ${u.estado.perfil.nome}! 🤗\n\n` + CC.textoAjuda(u.estado).split('\n').slice(2).join('\n'));
   }
-  if (/^(link|app|aplicativo|abrir app|meu app)\b/.test(t)) return env(`📲 Seu acesso ao app (vale para este celular; não compartilhe):\n${linkEntrada(u)}`, { forcarTexto: true });
+  if (/^(link|app|aplicativo|abrir app|meu app)\b/.test(t)) return env(`📲 Seu acesso ao app (vale uma vez, por 24 horas; não compartilhe):\n${linkEntrada(u)}`, { forcarTexto: true, semChat: true });
   m = t.match(/^(orcamento|meu orcamento|limite do mes)\D*([\d.,]+)/);
   if (m) { u.estado.perfil.orcamento = CC.extrairValor(m[2]).valor; u.estado.perfilUpd = Date.now(); u.rev++; return env(`🎯 Orçamento do mês definido: ${CC.brl(u.estado.perfil.orcamento)}. Eu te aviso quando estiver chegando perto!`); }
 
@@ -562,7 +586,7 @@ async function ciclo() {
   if (hm >= '03:00') backupDiario(hojeIso);
   await limparVencidas(hojeIso, hm);
   for (const [kk, v] of tentativas) if (Date.now() - v.em > 15 * 60e3) tentativas.delete(kk);
-  for (const nome of ['resets', 'tgcodigos']) for (const [kk, v] of Object.entries(DB[nome] || {})) if (Date.now() - v.em > 864e5) delete DB[nome][kk];
+  for (const nome of ['resets', 'tgcodigos', 'entradas']) for (const [kk, v] of Object.entries(DB[nome] || {})) if (Date.now() - v.em > 864e5) delete DB[nome][kk];
   for (const u of Object.values(DB.usuarios)) {
     if (!u || !canalDe(u) || u.bloqueado || expirado(u)) continue;
     const e = u.estado; u.enviados = u.enviados || {};
@@ -627,6 +651,8 @@ function csvDaConta(u) {
   for (const r of u.estado.recargas || []) linhas.push([r.data, 'Cr\u00e9dito no Ticket', r.desc || 'Cr\u00e9dito', '', String(Number(r.valor) || 0).replace('.', ','), 'Ticket'].map(csvCampo).join(';'));
   return '\ufeff' + linhas.join('\r\n');
 }
+const ARQ_GZ = new Map(); // os arquivos só mudam com uma nova publicação
+const cabecalhosArq = (arq, ext, gz) => Object.assign({ 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY', 'Strict-Transport-Security': 'max-age=31536000', 'Content-Type': TIPOS[ext] || 'application/octet-stream', 'Cache-Control': ext === '.html' || arq.endsWith('sw.js') ? 'no-cache' : 'public, max-age=3600' }, gz ? { 'Content-Encoding': 'gzip' } : {});
 const servidor = http.createServer(async (req, res) => {
   res.setHeader('Content-Security-Policy', CSP);
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -656,6 +682,7 @@ const servidor = http.createServer(async (req, res) => {
       res.writeHead(200); res.end('ok'); // responde rápido; processa depois
       const corpo = JSON.parse(bruto.toString() || '{}');
       for (const ent of corpo.entry || []) for (const ch of ent.changes || []) for (const msg of (ch.value && ch.value.messages) || []) {
+        if (msg.id && jaVista('wa:' + msg.id)) continue;
         (async () => {
           try {
             if (msg.type === 'text') await receber(msg.from, msg.text.body);
@@ -681,7 +708,7 @@ const servidor = http.createServer(async (req, res) => {
       if (USA_SB && Date.now() - (global.ultimoToqueSB || 0) > 6 * 3600e3) { global.ultimoToqueSB = Date.now(); sb('GET', 'kv?select=chave&limit=1').catch((e) => log('saúde', e.message)); }
       return json(res, 200, { ok: true, whatsapp: !DEMO, banco: USA_SB ? 'supabase' : 'arquivo', usuarios: Object.keys(DB.usuarios).length });
     }
-    if (rota === '/api/config') return json(res, 200, { whatsapp: DEMO ? '' : process.env.WHATSAPP_NUMERO_EXIBICAO || '', demo: DEMO, telegram: TG_BOT, cadastroAberto: !(DB.config && DB.config.cadastroAberto === false), suporte: suporte(), email: EMAIL_LIGADO, retencao: CFG.retencao });
+    if (rota === '/api/config') return json(res, 200, { whatsapp: DEMO ? '' : process.env.WHATSAPP_NUMERO_EXIBICAO || '', demo: DEMO, telegram: TG_BOT, cadastroAberto: !(DB.config && DB.config.cadastroAberto === false), suporte: suporte(), email: EMAIL_LIGADO, retencao: CFG.retencao, assinatura: CFG.assinatura });
     if (rota === '/api/acesso') {
       const c = pega(DB.convites, H(url.searchParams.get('c') || ''));
       const u = c && DB.usuarios[c.k];
@@ -692,7 +719,7 @@ const servidor = http.createServer(async (req, res) => {
       if (!CFG.tgToken || req.headers['x-telegram-bot-api-secret-token'] !== TG_SEGREDO) { res.writeHead(401); return res.end(); }
       const corpo = JSON.parse((await lerCorpo(req, 1024 * 1024)).toString() || '{}');
       res.writeHead(200); res.end('ok');
-      if (corpo.message) tgReceber(corpo.message).catch((e) => log('telegram', e.message));
+      if (corpo.message && !(corpo.update_id && jaVista('tg:' + corpo.update_id))) tgReceber(corpo.message).catch((e) => log('telegram', e.message));
       return;
     }
     if (rota === '/api/telegram/link' && req.method === 'POST') {
@@ -723,6 +750,7 @@ const servidor = http.createServer(async (req, res) => {
         if (!CFG.empresa) pendencias.push('Nome do responsável: variável EMPRESA_NOME');
         if (!CFG.empresaDoc) pendencias.push('CPF ou CNPJ do responsável: variável EMPRESA_DOC');
         if (!CFG.contato) pendencias.push('E-mail de contato da privacidade: variável CONTATO_EMAIL');
+        if (!suporte()) pendencias.push('WhatsApp de suporte, separado do master: variável SUPORTE_WHATSAPP');
         if (!EMAIL_LIGADO) pendencias.push('Envio de e-mail para recuperar senha: variáveis BREVO_API_KEY e EMAIL_REMETENTE');
         return json(res, 200, { pendencias, auditoria: (DB.auditoria || []).slice(-60).reverse(), usuarios: lista, totais, planos: PLANOS, config: { cadastroAberto: !(DB.config && DB.config.cadastroAberto === false) } });
       }
@@ -813,7 +841,7 @@ const servidor = http.createServer(async (req, res) => {
       u.senha = hashSenha(b.senha); u.estado.perfil.nome = nome; u.estado.perfilUpd = Date.now();
       u.email = email; u.criadoPor = 'cadastro';
       if (!ehAdmin(u)) { u.plano = (DB.config && DB.config.planoCadastro) || 'gratis'; u.validade = calcValidade(u.plano); }
-      if (b.estado && typeof b.estado === 'object' && !b.estado.demo) { u.estado = CC.sanearEstado(CC.mesclar(u.estado, b.estado)); u.estado.perfil.nome = nome; u.estado.perfil.whatsapp = fone; }
+      if (b.estado && typeof b.estado === 'object' && !Array.isArray(b.estado) && !b.estado.demo) { try { u.estado = CC.sanearEstado(CC.mesclar(u.estado, b.estado)); } catch (e) { log('estado do cadastro ignorado'); } u.estado.perfil.nome = nome; u.estado.perfil.whatsapp = fone; }
       u.verificado = false; u.codigo = codigoVerif(); // só o próprio dono confirma o número, mesmo com o WhatsApp ainda desligado
       if (b.aceite === true) u.aceite = { versao: VERSAO_TERMOS, em: new Date().toISOString() };
       salvarDB();
@@ -843,6 +871,14 @@ const servidor = http.createServer(async (req, res) => {
         if (!bloqueado(k, 3)) { errou(k); enviarNovaSenha(u).catch((e) => log('nova senha', e.message)); }
       }
       return json(res, 200, { ok: true });
+    }
+    if (rota === '/api/entrar' && req.method === 'POST') {
+      if (bloqueado('ent:' + ip, 30)) return json(res, 429, { erro: 'Muitas tentativas. Espere alguns minutos.' });
+      const b = await corpoJSON(); const hc = H(String(b.codigo || '')); const e = pega(DB.entradas, hc);
+      if (!e || Date.now() - e.em > 864e5) { errou('ent:' + ip); return json(res, 400, { erro: 'Esse link já foi usado ou venceu. Mande "link" para o Sonhaí e receba outro.' }); }
+      delete DB.entradas[hc];
+      const u = DB.usuarios[e.k]; if (!u || u.bloqueado) return json(res, 400, { erro: 'Esse link não vale mais.' });
+      return json(res, 200, { token: novaSessao(u) });
     }
     if (rota === '/api/redefinir' && req.method === 'POST') {
       const b = await corpoJSON(); const r = pega(DB.resets, H(String(b.codigo || '')));
@@ -909,8 +945,13 @@ const servidor = http.createServer(async (req, res) => {
       if (req.method === 'PUT') {
         const { estado } = JSON.parse((await lerCorpo(req, 5 * 1024 * 1024)).toString());
         // conversa, pergunta em aberto e "desfazer" do WhatsApp/Telegram pertencem ao servidor
-        const { chat, pendente, desfazer } = u.estado;
-        u.estado = CC.sanearEstado(CC.mesclar(estado, u.estado)); u.estado.chat = chat; delete u.estado.demo;
+        if (!estado || typeof estado !== 'object' || Array.isArray(estado)) return json(res, 400, { erro: 'Dados inválidos.' });
+        const { chat, pendente, desfazer, perfil: perfilAntes } = u.estado;
+        const perfilOk = estado.perfil && typeof estado.perfil === 'object' && !Array.isArray(estado.perfil);
+        if (!perfilOk) { delete estado.perfil; delete estado.perfilUpd; }
+        u.estado = CC.mesclar(estado, u.estado);
+        if (!u.estado.perfil) u.estado.perfil = perfilAntes;
+        CC.sanearEstado(u.estado); u.estado.chat = chat; delete u.estado.demo;
         if (pendente) u.estado.pendente = pendente; else delete u.estado.pendente;
         if (desfazer) u.estado.desfazer = desfazer; else delete u.estado.desfazer;
         u.rev++; salvarDB();
@@ -922,7 +963,7 @@ const servidor = http.createServer(async (req, res) => {
       if (bloqueado('aud:' + chaveFone(u.fone), 60)) return json(res, 429, { erro: 'Muitos áudios em pouco tempo. Espere alguns minutos.' }); errou('aud:' + chaveFone(u.fone));
       const buf = await lerCorpo(req);
       try { return json(res, 200, { texto: await transcrever(buf, req.headers['content-type'] || 'audio/webm') }); }
-      catch (e) { return json(res, 500, { erro: e.message }); }
+      catch (e) { log('transcrição', e.message); return json(res, 500, { erro: 'Não consegui entender o áudio. Pode repetir ou escrever?' }); }
     }
     // simulador para testes locais (sem WhatsApp configurado) ou com chave de administrador
     if (rota === '/api/simular' && req.method === 'POST' && testeLiberado(req)) {
@@ -937,17 +978,31 @@ const servidor = http.createServer(async (req, res) => {
     const nomeArq = rota === '/' ? 'index.html' : decodeURIComponent(rota).replace(/^\/+/, '');
     let arq = PUBLICOS.has(nomeArq) ? path.join(PUB, nomeArq) : path.join(PUB, 'index.html');
     if (!fs.existsSync(arq)) arq = path.join(PUB, 'index.html');
-    let conteudo = fs.readFileSync(arq);
     const ext = path.extname(arq);
+    const aceitaGzip = /\bgzip\b/.test(req.headers['accept-encoding'] || '') && /\.(html|js|svg|webmanifest)$/.test(ext);
+    res.setHeader('Vary', 'Accept-Encoding');
+    if (aceitaGzip && ARQ_GZ.has(arq)) { res.writeHead(200, cabecalhosArq(arq, ext, true)); return res.end(ARQ_GZ.get(arq)); }
+    let conteudo = fs.readFileSync(arq);
     if (arq.endsWith('index.html')) conteudo = Buffer.from(conteudo.toString().replace('<!--CC_SERVER-->', '<script>window.CC_SERVER=true</script>'));
     if (arq.endsWith('privacidade.html') || arq.endsWith('termos.html')) conteudo = Buffer.from(preencherLegal(conteudo.toString()));
-    res.writeHead(200, { 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY', 'Strict-Transport-Security': 'max-age=31536000', 'Content-Type': TIPOS[ext] || 'application/octet-stream', 'Cache-Control': ext === '.html' || arq.endsWith('sw.js') ? 'no-cache' : 'public, max-age=3600' });
+    if (aceitaGzip) { conteudo = zlib.gzipSync(conteudo); ARQ_GZ.set(arq, conteudo); res.writeHead(200, cabecalhosArq(arq, ext, true)); return res.end(conteudo); }
+    res.writeHead(200, cabecalhosArq(arq, ext, false));
     res.end(conteudo);
   } catch (e) {
     log('erro', rota, e.message);
     if (!res.headersSent) json(res, 500, { erro: 'Erro interno' });
   }
 });
+// o Render avisa antes de reiniciar: grava o que ainda está na memória
+let encerrando = false;
+async function encerrar() {
+  if (encerrando) return; encerrando = true;
+  clearTimeout(salvarT);
+  try { for (let i = 0; i < 50 && gravando; i++) await new Promise((r) => setTimeout(r, 100)); await gravar(); } catch (e) { log('encerrar', e.message); }
+  process.exit(0);
+}
+process.on('SIGTERM', encerrar);
+process.on('SIGINT', encerrar);
 servidor.headersTimeout = 15000;
 servidor.requestTimeout = 60000;
 (async () => {
