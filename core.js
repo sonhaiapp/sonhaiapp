@@ -11,7 +11,7 @@
 
   // ---------------------------------------------------------------- categorias
   const CATEGORIAS = [
-    { nome: 'Mercado', emoji: '🛒', cor: '#2BB673', chaves: ['mercado', 'supermercado', 'assai', 'atacad', 'atacadao', 'savegnago', 'carrefour', 'feira', 'hortifruti', 'sacolao', 'acougue', 'tonin', 'big compras', 'compras do mes'] },
+    { nome: 'Mercado', emoji: '🛒', cor: '#2BB673', chaves: ['mercado', 'supermercado', 'assai', 'atacad', 'atacadao', 'savegnago', 'carrefour', 'feira', 'hortifruti', 'sacolao', 'acougue', 'tonin', 'big compras', 'compras do mes', 'compras'] },
     { nome: 'Padaria', emoji: '🥖', cor: '#E9A23B', chaves: ['padaria', 'pao', 'paes', 'croissant', 'confeitaria'] },
     { nome: 'Restaurante/Lanche', emoji: '🍔', cor: '#F2643D', chaves: ['restaurante', 'lanche', 'lanchonete', 'ifood', 'i food', 'almoco', 'almocei', 'jantar', 'jantei', 'pizza', 'hamburguer', 'burger', 'bar ', 'barzinho', 'cafe', 'sorveteria', 'marmita', 'pastel', 'churrasc', 'esfiha', 'sushi', 'chicken', 'delivery', 'rappi'] },
     { nome: 'Combustível', emoji: '⛽', cor: '#D64545', chaves: ['gasolina', 'etanol', 'alcool', 'combustivel', 'posto', 'abasteci', 'abastecer', 'diesel', 'gnv'] },
@@ -62,39 +62,66 @@
 
   // --------------------------------------------------------- números falados
   const UNID = { zero: 0, um: 1, uma: 1, dois: 2, duas: 2, tres: 3, quatro: 4, cinco: 5, seis: 6, sete: 7, oito: 8, nove: 9, dez: 10, onze: 11, doze: 12, treze: 13, quatorze: 14, catorze: 14, quinze: 15, dezesseis: 16, dezessete: 17, dezoito: 18, dezenove: 19, vinte: 20, trinta: 30, quarenta: 40, cinquenta: 50, sessenta: 60, setenta: 70, oitenta: 80, noventa: 90, cem: 100, cento: 100, duzentos: 200, duzentas: 200, trezentos: 300, quatrocentos: 400, quinhentos: 500, seiscentos: 600, setecentos: 700, oitocentos: 800, novecentos: 900 };
-  /** Troca números por extenso por algarismos: "cinquenta e dois reais" -> "52 reais". */
+  /** Dentro de um número falado, cada parte seguinte precisa ser menor: "cento e vinte e cinco". */
+  function podeSeguir(ant, prox) {
+    if (ant === 'cem') return false;
+    const a = UNID[ant], p = UNID[prox];
+    if (a >= 100) return p > 0 && p < 100;
+    if (a >= 20) return p > 0 && p < 10;
+    return false;
+  }
+  /** Troca números por extenso por algarismos: "cinquenta e dois reais" -> "52 reais"; "2 mil" -> "2000". */
   function extensoParaNumero(txt) {
+    txt = txt.replace(/(\d+(?:[.,]\d{1,3})?)\s*mil\b/g, (_, n) => String(Math.round(parseFloat(n.replace(',', '.')) * 1000)));
     const tokens = txt.split(/(\s+)/);
     const out = []; let i = 0;
     while (i < tokens.length) {
       const w = tokens[i];
       if (UNID[w] !== undefined || w === 'mil') {
-        let total = 0, atual = 0, j = i, ultimo = i, achou = false;
+        let total = 0, atual = 0, j = i, ultimo = i, achou = false, ant = null;
         while (j < tokens.length) {
           const t = tokens[j];
           if (/^\s+$/.test(t)) { j++; continue; }
-          if (UNID[t] !== undefined) { atual += UNID[t]; achou = true; ultimo = j; j++; continue; }
-          if (t === 'mil') { total += (atual || 1) * 1000; atual = 0; achou = true; ultimo = j; j++; continue; }
+          if (UNID[t] !== undefined) {
+            if (ant && !podeSeguir(ant, t)) break;
+            atual += UNID[t]; achou = true; ultimo = j; ant = t; j++; continue;
+          }
+          if (t === 'mil') { total += (atual || 1) * 1000; atual = 0; achou = true; ultimo = j; ant = null; j++; continue; }
           if (t === 'e' && achou) {
             let k = j + 1; while (k < tokens.length && /^\s+$/.test(tokens[k])) k++;
-            if (k < tokens.length && (UNID[tokens[k]] !== undefined)) { j = k; continue; }
+            if (k < tokens.length && UNID[tokens[k]] !== undefined && (!ant || podeSeguir(ant, tokens[k]))) { j = k; continue; }
           }
           break;
         }
-        // "um"/"uma" sozinhos geralmente são artigos ("um lanche")
+        // "um"/"uma" sozinhos geralmente são artigos ("um lanche"), menos em "um real"
         const pal = tokens.slice(i, ultimo + 1).join('').trim();
-        if (achou && !(pal === 'um' || pal === 'uma')) { out.push(String(total + atual)); i = ultimo + 1; continue; }
+        let k2 = ultimo + 1; while (k2 < tokens.length && /^\s+$/.test(tokens[k2])) k2++;
+        const moedaDepois = /^(real|conto|pila)$/.test(tokens[k2] || '');
+        if (achou && (!(pal === 'um' || pal === 'uma') || moedaDepois)) { out.push(String(total + atual)); i = ultimo + 1; continue; }
       }
       out.push(w); i++;
     }
-    return out.join('');
+    // "2000 e 500" -> 2500 (milhar e o resto)
+    return out.join('').replace(/\b(\d{1,3}000)\s+e\s+(\d{1,3})\b(?!\s*(?:x\b|vezes|parcelas?|h\b|horas?|:|\/|centavos?))/g, (_, a, b) => String(+a + +b));
   }
 
   // -------------------------------------------------------- extração de valor
+  /** "1.234,56", "1234.56", "99.90", "1.500" -> número */
+  function paraNumero(bruto) {
+    let s = String(bruto);
+    if (/\.\d{3}/.test(s) && !/,\d{1,2}$/.test(s) && !/\.\d{1,2}$/.test(s)) s = s.replace(/\./g, '');
+    else if (/,/.test(s)) s = s.replace(/\./g, '').replace(',', '.');
+    return parseFloat(s);
+  }
+  const UNIDADES = /^\s*(kgs?|quilos?|kilos?|gramas?|litros?|lts?|ml|pessoas?|unidades?|unid|metros?|km|duzias?)\b/;
+  // o que costuma vir logo depois de um preço; outra palavra indica quantidade ("2 camisas")
+  const LIGACAO = /^\s*($|[,.;!?]|\d|(de|do|da|dos|das|no|na|nos|nas|em|para|pra|pro|com|por|ao|a|o|e|hoje|ontem|anteontem|amanha|agora|dia)\b)/;
   function extrairValor(t) {
-    // "45 reais e 90 centavos"
-    let m = t.match(/(\d+)\s*reais?\s*e\s*(\d{1,2})\s*centavos?/);
-    if (m) return { valor: +m[1] + (+m[2]) / 100, trecho: m[0] };
+    // "45 reais e 90 centavos" / "52 reais e 90"
+    let m = t.match(/(\d+)\s*(?:reais|real|contos?)\s*e\s*(\d{1,2})\s*centavos?/);
+    if (m) return { valor: +m[1] + (+m[2]) / 100, trecho: m[0], moeda: true };
+    m = t.match(/(\d+)\s*(?:reais|real)\s*e\s*(\d{2})\b/);
+    if (m && LIGACAO.test(t.slice(m.index + m[0].length))) return { valor: +m[1] + (+m[2]) / 100, trecho: m[0], moeda: true };
     m = t.match(/(\d+)\s*centavos?/);
     const re = /r\$\s*(\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?)|(\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*(reais|real|conto|contos|pila|r\$)?/g;
     let melhor = null, x;
@@ -102,23 +129,37 @@
       const bruto = x[1] || x[2];
       const comMoeda = !!x[1] || !!x[3];
       const pos = x.index;
-      // ignora números que são datas/horas/parcelas/dias
-      const antes = t.slice(Math.max(0, pos - 6), pos);
-      const depois = t.slice(pos + x[0].length, pos + x[0].length + 8);
+      if (pos > 0 && /[a-z]/.test(t[pos - 1])) continue; // "c6", "h2o"
+      // ignora números que são datas/horas/parcelas/dias/quantidades
+      const antes = t.slice(Math.max(0, pos - 14), pos);
+      const depois = t.slice(pos + x[0].length);
       if (!comMoeda) {
-        if (/dia\s*$|as\s*$|às\s*$|em\s*$/.test(antes) && /^\s*(h|hora|x|vez|vezes|parcela|\/|:)/.test(depois)) continue;
-        if (/^\s*(h\b|horas?|x\b|vez|vezes|parcelas?|\/|:|de (janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)|meses|mes|anos?|dias?)/.test(depois)) continue;
-        if (/dia\s*$|\/\s*$|:\s*$|as\s*$/.test(antes)) continue;
+        if (/\b(dia|as|em)\s*$/.test(antes) && /^\s*(h\b|hora|x\b|vez|parcela|\/|:)/.test(depois)) continue;
+        if (/^\s*(h\b|horas?\b|x\b|vez\b|vezes\b|parcelas?\b|\/|:|de (janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\b|meses\b|mes\b(?!\s+(passado|retrasado))|anos?\b|dias\b|dia\b(?!\s+\d))/.test(depois)) continue;
+        if (/\bdia\s*$|\/\s*$|:\s*$|\bas\s*$/.test(antes)) continue;
         if (/\d\s*h\s*$/.test(antes)) continue;
+        if (UNIDADES.test(depois)) continue;
+        if (/\bparcel\w*\b/.test(t) && /\bem\s*$/.test(antes)) continue;
       }
-      let s = bruto;
-      if (/\.\d{3}/.test(s) && !/,\d{1,2}$/.test(s) && !/\.\d{1,2}$/.test(s)) s = s.replace(/\./g, '');
-      else if (/,/.test(s)) s = s.replace(/\./g, '').replace(',', '.');
-      const v = parseFloat(s);
-      if (!isFinite(v)) continue;
-      const cand = { valor: v, trecho: x[0], moeda: comMoeda, pos };
-      if (!melhor || (cand.moeda && !melhor.moeda)) melhor = cand;
+      let valor = paraNumero(bruto), trecho = x[0];
+      if (!isFinite(valor)) continue;
+      // "52 e 90" -> 52,90
+      if (!comMoeda && /^\d+$/.test(bruto)) {
+        const d = depois.match(/^\s*e\s+(\d{2})(?!\d)/);
+        if (d && LIGACAO.test(depois.slice(d[0].length))) { valor += +d[1] / 100; trecho = x[0] + d[0]; re.lastIndex += d[0].length; }
+      }
+      // pontuação: moeda > palavra de preço > número solto > número seguido de substantivo ("3 pizzas")
+      let pts = comMoeda ? 10 : 0;
+      const qtd = !comMoeda && !LIGACAO.test(t.slice(pos + trecho.length));
+      if (!comMoeda) {
+        if (/\b(por|custou|custa|deu|foi|ficou|saiu|valor|total|de)\s*$/.test(antes)) pts += 3;
+        else if (/\b(gastei|gastamos|paguei|pagamos|gasto|pago)\s*$/.test(antes)) pts += 2;
+        if (qtd) pts -= 3;
+      }
+      const cand = { valor, trecho, moeda: comMoeda, pos, pts, plural: qtd && /\b(comprei|compramos|comprou)\s*$/.test(antes) && /^\s*[a-z]+s\b/.test(t.slice(pos + trecho.length)) };
+      if (!melhor || cand.pts > melhor.pts || (cand.pts === melhor.pts && !cand.moeda)) melhor = cand;
     }
+    if (melhor && melhor.plural) return null; // "comprei 3 pizzas": sem preço
     if (melhor) return melhor;
     if (m) return { valor: +m[1] / 100, trecho: m[0] };
     return null;
@@ -127,37 +168,48 @@
   // --------------------------------------------------------- datas e horas
   const DIAS_SEMANA = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
   const MESES_SEM = MESES.map(sem);
-  function extrairData(t, hoje) {
+  /** modo 'passado' (gastos e entradas) olha para trás; 'futuro' (compromissos) olha para a frente. */
+  function extrairData(t, hoje, modo) {
+    const futuro = modo !== 'passado';
     const d = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate());
     const add = (n) => { const r = new Date(d); r.setDate(r.getDate() + n); return r; };
+    const dt = (y, mes, dia) => new Date(y, mes, Math.min(dia, new Date(y, mes + 1, 0).getDate()));
+    /** Sem ano informado: escolhe o ano que faz sentido para o modo. */
+    const noAno = (mes, dia) => {
+      const y = d.getFullYear(); const r = dt(y, mes, dia);
+      if (futuro) return r < add(-60) ? dt(y + 1, mes, dia) : r;
+      return r > d ? dt(y - 1, mes, dia) : r;
+    };
     if (/depois de amanha/.test(t)) return { data: iso(add(2)), trecho: 'depois de amanha' };
     if (/anteontem/.test(t)) return { data: iso(add(-2)), trecho: 'anteontem' };
     if (/\bontem\b/.test(t)) return { data: iso(add(-1)), trecho: 'ontem' };
     if (/\bamanha\b/.test(t)) return { data: iso(add(1)), trecho: 'amanha' };
     if (/\bhoje\b/.test(t)) return { data: iso(d), trecho: 'hoje' };
     let m = t.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/);
-    if (m) {
-      let y = m[3] ? +m[3] : d.getFullYear(); if (y < 100) y += 2000;
-      return { data: iso(new Date(y, +m[2] - 1, +m[1])), trecho: m[0] };
+    if (m && +m[2] >= 1 && +m[2] <= 12) {
+      if (m[3]) { let y = +m[3]; if (y < 100) y += 2000; return { data: iso(dt(y, +m[2] - 1, +m[1])), trecho: m[0] }; }
+      return { data: iso(noAno(+m[2] - 1, +m[1])), trecho: m[0] };
     }
     m = t.match(/\bdia\s+(\d{1,2})(?:\s+de\s+(janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro))?/);
     if (m) {
       const dia = +m[1];
-      let mes = m[2] ? MESES_SEM.indexOf(m[2]) : d.getMonth();
-      let y = d.getFullYear();
-      return { data: iso(new Date(y, mes, dia)), trecho: m[0], dia };
+      if (m[2]) return { data: iso(noAno(MESES_SEM.indexOf(m[2]), dia)), trecho: m[0], dia };
+      // sem mês: "dia 3" já passou? compromisso vai para o mês que vem; "dia 28" ainda não chegou? gasto foi no mês passado
+      let r = dt(d.getFullYear(), d.getMonth(), dia);
+      if (futuro && r < d) r = dt(d.getFullYear(), d.getMonth() + 1, dia);
+      if (!futuro && r > d) r = dt(d.getFullYear(), d.getMonth() - 1, dia);
+      return { data: iso(r), trecho: m[0], dia };
     }
     m = t.match(/\b(\d{1,2})\s+de\s+(janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)/);
-    if (m) {
-      let y = d.getFullYear(); const mes = MESES_SEM.indexOf(m[2]);
-      let r = new Date(y, mes, +m[1]); if (r < add(-60)) r = new Date(y + 1, mes, +m[1]);
-      return { data: iso(r), trecho: m[0] };
-    }
+    if (m) return { data: iso(noAno(MESES_SEM.indexOf(m[2]), +m[1])), trecho: m[0] };
     for (let i = 0; i < 7; i++) {
-      const re = new RegExp('\\b(?:na |no |nessa |nesta |proxima |proximo )?' + DIAS_SEMANA[i] + '(?:-feira| feira)?\\b');
+      const re = new RegExp('\\b(?:na |no |nessa |nesta |proxima |proximo |ultima |ultimo )?' + DIAS_SEMANA[i] + '(?:-feira| feira)?\\b(?!\\s+(?:parcela|via|vez|mao|prestacao))');
       const mm = t.match(re);
       if (mm) {
-        let n = (i - d.getDay() + 7) % 7; if (n === 0) n = 7;
+        let n = (i - d.getDay() + 7) % 7;
+        const passado = /\b(passad[oa]|ultim[oa])\b/.test(t), proximo = /\b(proxim[oa]|que vem)\b/.test(t);
+        if (passado || (!futuro && !proximo)) n = n === 0 ? -7 : n - 7;
+        else if (n === 0) n = 7;
         return { data: iso(add(n)), trecho: mm[0] };
       }
     }
@@ -180,7 +232,7 @@
   function adivinharCategoria(t, cats) {
     const lista = cats && cats.length ? cats : CATEGORIAS;
     let melhor = null, tam = 0;
-    const tt = ' ' + t + ' ';
+    const tt = ' ' + t.replace(/caixa eletronico/g, ' ') + ' ';
     for (const c of lista) {
       const base = CATEGORIAS.find((x) => x.nome === c.nome);
       const chaves = (c.chaves || (base && base.chaves) || []).concat([sem(c.nome)]);
@@ -209,15 +261,18 @@
   const pagamento = (t) => (/credito|cartao/.test(t) ? 'Cartão' : /\bpix\b/.test(t) ? 'Pix' : /debito/.test(t) ? 'Débito' : /dinheiro|especie/.test(t) ? 'Dinheiro' : '');
 
   // ------------------------------------------------------- conversa com perguntas
-  /** Interpreta e aplica; se havia uma pergunta pendente (ex.: em qual sonho guardar), resolve primeiro. */
+  /** Interpreta e aplica; se havia uma pergunta pendente, resolve primeiro. Exclusões sempre pedem confirmação. */
   function conversar(estado, texto, opts) {
     opts = opts || {};
     const hoje = opts.hoje || new Date();
     const p = estado.pendente;
     if (p && Date.now() - (p.em || 0) < 15 * 60e3) {
       const t = sem(texto).trim();
-      if (/^(cancela|cancelar|deixa|deixa pra la|nao|esquece)\b/.test(t)) { delete estado.pendente; return { ok: true, msg: 'Tudo bem, não guardei nada. 🙂' }; }
-      if (p.tipo === 'sonho' && !extrairValor(t.replace(/^\d{1,2}$/, '')) && !/\b(gastei|paguei|comprei|recebi)\b/.test(t)) {
+      if (/^(cancela|cancelar|deixa|deixa pra la|nao|n|esquece)\b/.test(t)) { delete estado.pendente; return { ok: true, msg: p.tipo === 'excluir' ? 'Tudo bem, não excluí nada. 🙂' : 'Tudo bem, não guardei nada. 🙂' }; }
+      if (p.tipo === 'excluir') {
+        delete estado.pendente;
+        if (/^(sim|s|pode|isso|confirmo|confirmar|ok|exclui|excluir|apaga|apagar)\b/.test(t)) { const r = aplicar(estado, p.acao, opts); r.acao = p.acao; return r; }
+      } else if (p.tipo === 'sonho' && !extrairValor(t.replace(/^\d{1,2}$/, '')) && !/\b(gastei|paguei|comprei|recebi)\b/.test(t)) {
         delete estado.pendente;
         const n = t.match(/^(\d{1,2})\.?$/);
         const lista = estado.sonhos || [];
@@ -226,9 +281,16 @@
         if (!alvo && n) return { ok: false, msg: 'Não achei esse número. Responda de novo, por favor. 🙂', pergunta: p };
         return aplicar(estado, acao, opts);
       }
-      delete estado.pendente;
     }
+    delete estado.pendente;
     const acao = interpretar(texto, { hoje, categorias: estado.categorias, sonhos: estado.sonhos, cartoes: estado.cartoes });
+    if (acao.tipo === 'excluir') {
+      const alvo = acharExclusao(estado, acao);
+      if (!alvo.item) return { ok: false, msg: alvo.msg, acao };
+      const pergunta = { tipo: 'excluir', em: Date.now(), acao: Object.assign({}, acao, { alvoCol: alvo.col, alvoId: alvo.item.id }) };
+      estado.pendente = pergunta;
+      return { ok: false, acao, pergunta, msg: `🗑️ Quer mesmo excluir ${descreverAlvo(alvo)}?\nResponda *sim* ou *não*.` };
+    }
     const r = aplicar(estado, acao, opts);
     if (r.pergunta) estado.pendente = r.pergunta;
     r.acao = acao;
@@ -276,10 +338,24 @@
     estado.cartoes.push(c);
     return c;
   }
-  /** Em qual fatura (mês) uma compra cai, considerando o dia de fechamento. */
+  /** Dia de fechamento; sem ele informado, considera 7 dias antes do vencimento (o mais comum nos bancos). */
+  function diaFechamento(cartao) {
+    const f = +(cartao && cartao.fechamento);
+    if (f) return f;
+    const v = +(cartao && cartao.diaVenc) || 10;
+    return v > 7 ? v - 7 : v + 23;
+  }
+  /** Em qual fatura (mês do fechamento) uma compra cai. */
   function mesFatura(cartao, data) {
     const ym = mesDe(data);
-    return cartao && +cartao.fechamento && +String(data).slice(8, 10) >= +cartao.fechamento ? somaMes(ym, 1) : ym;
+    if (!cartao) return ym;
+    return +String(data).slice(8, 10) >= Math.min(diaFechamento(cartao), diasNoMes(ym)) ? somaMes(ym, 1) : ym;
+  }
+  /** Vencimento da fatura: no mesmo mês do fechamento ou, se vence "antes" do fechamento, no mês seguinte. */
+  function vencFatura(cartao, ym) {
+    const v = +cartao.diaVenc || 10;
+    const m = v > diaFechamento(cartao) ? ym : somaMes(ym, 1);
+    return m + '-' + pad(Math.min(v, diasNoMes(m)));
   }
   /** Fatura de um cartão num mês: compras, parcelas, restante anterior, total, pago, situação. */
   function fatura(estado, cartaoId, ym, hoje, prof) {
@@ -294,7 +370,7 @@
     const reg = (c.faturas || {})[ym] || null;
     const pago = reg ? (reg.status === 'total' ? total : Number(reg.pago) || 0) : 0;
     const falta = Math.max(0, Math.round((total - pago) * 100) / 100);
-    const venc = ym + '-' + pad(Math.min(+c.diaVenc || 10, diasNoMes(ym)));
+    const venc = vencFatura(c, ym);
     const h = hoje ? iso(hoje) : iso(new Date());
     let situacao = 'aberta';
     if (reg && reg.status === 'total') situacao = 'paga';
@@ -312,14 +388,24 @@
   }
   function faturasAVencer(estado, hoje, dias) {
     const out = [];
+    const ym0 = mesDe(iso(hoje));
     for (const c of estado.cartoes || []) {
-      for (const ym of [mesDe(iso(hoje)), somaMes(mesDe(iso(hoje)), 1)]) {
+      for (const ym of [somaMes(ym0, -1), ym0, somaMes(ym0, 1)]) {
         const f = fatura(estado, c.id, ym, hoje); if (!f || f.situacao === 'paga' || f.situacao === 'vazia' || f.falta <= 0) continue;
         const dd = Math.round((new Date(f.venc + 'T12:00') - new Date(iso(hoje) + 'T12:00')) / 864e5);
         if (dd >= 0 && dd <= dias) out.push({ fatura: f, emDias: dd });
       }
     }
     return out;
+  }
+  /** A fatura em aberto mais antiga do cartão (é a que a pessoa quer pagar ou consultar). */
+  function faturaDaVez(estado, cartao, hoje) {
+    const ym0 = mesDe(iso(hoje));
+    for (const k of [-2, -1, 0, 1]) {
+      const ym = somaMes(ym0, k); const f = fatura(estado, cartao.id, ym, hoje);
+      if (f && f.falta > 0 && f.situacao !== 'paga' && f.situacao !== 'vazia') return ym;
+    }
+    return ym0;
   }
 
   // -------------------------------------------------------------- interpretar
@@ -338,12 +424,13 @@
 
     if (/^(oi|ola|bom dia|boa tarde|boa noite|ajuda|menu|comandos|help|inicio|começar|comecar)\b/.test(t) && !extrairValor(t)) return { tipo: 'ajuda' };
     if (/\b(desfaz|desfazer|desfaca|volta o ultimo|cancela o ultimo|apaga o ultimo|exclui o ultimo|exclua o ultimo|remove o ultimo)\b/.test(t) && !/\d/.test(t)) return { tipo: 'desfazer' };
-    if (/\b(quanto (eu )?(ja )?gastei|resumo|saldo|como (estou|esta|to|ta)|balanco|extrato|meu mes)\b/.test(t)) return { tipo: 'resumo' };
+    if (/\b(quanto (eu )?(ja )?gastei|quanto (me )?(sobrou|sobra|resta)|quanto (eu )?(tenho|posso gastar)|resumo|saldo|como (estou|esta|to|ta)|balanco|extrato|meu mes)\b/.test(t)) return { tipo: 'resumo' };
     if (/\b(contas? (a|pra|para) (pagar|vencer)|o que vence|quais contas|contas da semana|contas pendentes|boletos)\b/.test(t) && !extrairValor(t)) return { tipo: 'contas_pendentes' };
     if (/\b(agenda|compromissos? (de )?hoje|meus compromissos|o que tenho hoje)\b/.test(t) && !/\b(marca|marcar|agenda[r]? (uma|um|o|a)|lembra)/.test(t)) return { tipo: 'agenda_hoje' };
 
     const val = extrairValor(t);
-    const dt = extrairData(t, hoje);
+    const dt = extrairData(t, hoje, 'passado'); // gastos, entradas e sonhos olham para trás
+    const dtF = extrairData(t, hoje, 'futuro'); // compromissos e vencimentos olham para a frente
     const hr = extrairHora(t);
 
     // RESGATE / TRANSFERÊNCIA de sonho (cofrinho)
@@ -362,15 +449,45 @@
       return { tipo: 'resgate', valor: val.valor, termo: origemTxt, destino: destinoTxt, renda, data: dt ? dt.data : iso(hoje) };
     }
 
-    // EXCLUIR
-    if (/\b(exclu|apag|remov|delet|cancel|tira|retira|estorn)\w*/.test(t)) {
+    // EXCLUIR: só quando a frase é um pedido ("apaga o gasto...", "pode excluir..."), nunca em "gastei 50 em Tiradentes"
+    const pedidoExcluir = /^(?:(?:por favor|pode|quero|preciso|favor|me|vamos|tem como|da pra|da para|sonhai|oi|ola|ei)\s+)*(?:exclui|excluir|exclua|excluo|apaga|apagar|apague|remove|remover|remova|deleta|deletar|delete|cancela|cancelar|cancele|tira|tirar|tire|retira|retirar|retire|estorna|estornar|estorne)\b/.test(t);
+    const passadoExcluir = /^(?:cancelei|apaguei|exclui|removi|deletei|estornei|retirei|tirei)\s+(?:o |a |um |uma |aquele |aquela )?(?:gasto|lancamento|compra|entrada|conta|compromisso)\b/.test(t);
+    if (pedidoExcluir || passadoExcluir) {
       const termo = limparDescricao(original.replace(/\b(exclu|apag|remov|delet|cancel|tira|retira|estorn)\w*/gi, ''), [val && val.trecho, dt && dt.trecho, 'gasto', 'lancamento', 'lançamento', 'ultimo', 'último']);
       return { tipo: 'excluir', valor: val ? val.valor : null, termo: sem(termo), data: dt ? dt.data : null, alvo: /compromisso|consulta|reuniao/.test(t) ? 'agenda' : /conta\b|boleto/.test(t) && !val ? 'conta' : 'lancamento' };
     }
 
+    // "cancelei a netflix 40" conta uma novidade, não um gasto
+    if (/^(cancelei|cancelamos)\b/.test(t)) return { tipo: 'desconhecido', texto: original };
+
+    const fatoFeito = /\b(gastei|gastamos|comprei|compramos|paguei|pagamos|recebi|recebemos|ganhei|ganhamos|guardei|guardamos|juntei|poupei|economizei|investi|abasteci|almocei|jantei|caiu|entrou)\b/;
+
+    // RENDA FIXA: "meu salário é 5000 todo dia 5", "recebo 3000 por mês"
+    const palavraRenda = /\b(salario|renda|aposentadoria|pensao|pro labore|adiantamento|recebo|ganho)\b/;
+    const repeteRenda = /\b(todo|toda|todos|cada mes|por mes|ao mes|mensal|renda fixa|meu salario e|minha renda e|recebo|ganho)\b/;
+    if (val && palavraRenda.test(t) && repeteRenda.test(t) && !fatoFeito.test(t)) {
+      const diaR = t.match(/\bdia\s+(\d{1,2})\b/);
+      const catR = /adiantamento/.test(t) ? 'Adiantamento' : /aposentadoria|pensao/.test(t) ? 'Aposentadoria' : /salario|recebo|ganho/.test(t) ? 'Salário' : 'Outra renda';
+      return { tipo: 'renda_fixa', nome: catR === 'Outra renda' ? 'Renda fixa' : catR, cat: catR, valor: val.valor, dia: diaR ? +diaR[1] : 5 };
+    }
+
+    // META DE SONHO: "meta de 10000 para o carro", "quero juntar 8000 para a viagem"
+    const fazPorMes = /\b(por mes|ao mes|todo mes|por semana|toda semana)\b/.test(t);
+    const ehMeta = val && !fatoFeito.test(t) && !fazPorMes && (/^(?:(?:minha|meu|nossa|nosso|a|o)\s+)?(?:meta|objetivo|sonho)\b/.test(t) || /\b(?:quero|queremos|vou|vamos|preciso|pretendo|planejo)\s+(?:juntar|guardar|poupar)\b/.test(t));
+    if (ehMeta) {
+      const nomeM = limparDescricao(original, [val.trecho, dt && dt.trecho, 'meta', 'objetivo', 'sonho', 'quero', 'queremos', 'vou', 'vamos', 'preciso', 'pretendo', 'planejo', 'juntar', 'guardar', 'poupar', 'nosso', 'nossa', 'minha', 'meu', 'por']) || 'Meu sonho';
+      return { tipo: 'meta_sonho', valor: val.valor, nome: nomeM };
+    }
+
+    // PLANO ou PERGUNTA: "vale a pena comprar uma TV de 2000" não é um gasto
+    const quer = /\b(vale a pena|sera que|posso|devo|deveria|quero|queremos|queria|gostaria|pretendo|planejo|vou|vamos|preciso|pensando em|penso em|se eu)\b/.test(t);
+    const verboPlano = /\b(compr\w*|gast\w*|pag\w*|guard\w*|junt\w*|invest\w*|poup\w*|econom\w*|troc\w*|viaj\w*|parcel\w*)\b/.test(t);
+    if (val && !fatoFeito.test(t) && !/\b(vence|vencimento|lembr\w*|agend\w*|boleto)\b/.test(t) && ((quer && verboPlano) || /\?\s*$/.test(original))) return { tipo: 'plano', texto: original };
+
     // SONHO (guardar / investir / cofrinho)
     const verboGuardar = /\b(guard(ei|ar|e|a|amos)|junt(ei|ar|e|a)|poup(ei|ar|e|a)|economiz(ei|ar)|separ(ei|ar|e|a)|reserv(ei|ar|e)|invest(i|ir|e|a|imos)|deposit(ei|ar|e|a)|apliq(uei)|aplic(ar|a|ou)|cofrinho|caixinha)\b/;
-    if (val && verboGuardar.test(t) && !/\b(gastei|comprei|paguei|guarda.?roupa|guarda.?chuva)\b/.test(t)) {
+    const soReservou = /\breserv(ei|ar|e)\b/.test(t) && !/\b(guard|junt|poup|economiz|separ|invest|deposit|aplic|cofrinho|caixinha)/.test(t) && !/\b(para|pra|pro)\b/.test(t); // "reservei o hotel 500" é gasto
+    if (val && verboGuardar.test(t) && !soReservou && !/\b(gastei|comprei|paguei|guarda.?roupa|guarda.?chuva)\b/.test(t)) {
       const restoOrig = (limparDescricao(original, [val.trecho, dt && dt.trecho, 'guardei', 'guardar', 'guarde', 'guarda', 'juntei', 'juntar', 'poupei', 'poupar', 'economizei', 'separei', 'separar', 'reservei', 'reservar', 'investi', 'investir', 'invista', 'depositei', 'depositar', 'apliquei', 'aplicar', 'coloquei', 'colocar', 'coloca', 'coloque', 'botei', 'sonho', 'meu', 'minha', 'nosso', 'nossa', 'dinheiro', 'valor'])) || '';
       const resto = sem(restoOrig);
       const generico = !resto || /^(cofrinho|caixinha|sonhos?|cofre|poupanca da casa|algum|um|uma)$/.test(resto.trim()) || resto.trim().length < 3;
@@ -383,7 +500,7 @@
     const verbosGasto = /\b(gastei|gastamos|gasto|gastar|comprei|compramos|compra|comprar|paguei|pagamos|pagar|despesa|saida|torrei|desembolsei|debitou|saiu)\b/;
     const ehEntrada = val && (fortesEntrada.test(t) && !/\b(receita medica|receita de bolo)\b/.test(t) || (fracosEntrada.test(t) && !verbosGasto.test(t)));
     if (ehEntrada && !(verbosGasto.test(t) && !fortesEntrada.test(t))) {
-      let tipoE = /salario/.test(t) ? 'Salário' : /adiantamento|vale\b/.test(t) ? 'Adiantamento' : /13|decimo/.test(t) ? '13º salário' : /bonus|plr/.test(t) ? 'Bônus/PLR' : /comissao/.test(t) ? 'Comissão' : /aluguel/.test(t) ? 'Aluguel recebido' : /vendi|venda/.test(t) ? 'Venda' : /reembolso|restituicao|cashback/.test(t) ? 'Reembolso' : /rendimento|dividendo/.test(t) ? 'Rendimentos' : /freela/.test(t) ? 'Freela' : /pix/.test(t) ? 'Pix recebido' : /aposentadoria|inss/.test(t) ? 'Aposentadoria' : 'Outra renda';
+      let tipoE = /salario/.test(t) ? 'Salário' : /adiantamento|vale\b(?!\s*(alimentacao|refeicao|ticket))/.test(t) ? 'Adiantamento' : /13|decimo/.test(t) ? '13º salário' : /bonus|plr/.test(t) ? 'Bônus/PLR' : /comissao/.test(t) ? 'Comissão' : /aluguel/.test(t) ? 'Aluguel recebido' : /vendi|venda/.test(t) ? 'Venda' : /reembolso|restituicao|cashback/.test(t) ? 'Reembolso' : /rendimento|dividendo/.test(t) ? 'Rendimentos' : /freela/.test(t) ? 'Freela' : /pix/.test(t) ? 'Pix recebido' : /aposentadoria|inss/.test(t) ? 'Aposentadoria' : 'Outra renda';
       const desc = limparDescricao(original, [val.trecho, dt && dt.trecho, 'recebi', 'recebemos', 'receber', 'recebido', 'recebida', 'ganhei', 'ganhamos', 'entrou', 'entrada', 'renda', 'receita', 'caiu', 'me pagaram', 'pagaram', 'pingou', 'depositaram', 'criar', 'cria', 'crie', 'nova', 'novo', 'lançar', 'lança', 'lance', 'registrar', 'adicionar', 'adiciona', 'colocar', 'coloca', 'vendi', 'por', 'pela', 'pelo']) || tipoE;
       return { tipo: 'entrada', valor: val.valor, desc, cat: tipoE, data: dt ? dt.data : iso(hoje) };
     }
@@ -392,34 +509,37 @@
     if (/\bfatura\b/.test(t) || (/\bcartao\b/.test(t) && /\b(paguei|quitei|quanto|como esta|ver)\b/.test(t) && !/\b(com|no)\s+(o\s+)?cartao\b/.test(t))) {
       const card = detectarCartao(t, opts.cartoes, true);
       const mesM = t.match(/\b(janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\b/);
-      let ym = mesDe(iso(hoje));
+      let ym = mesDe(iso(hoje)); let ymAuto = false;
       if (mesM) { const mi = MESES_SEM.indexOf(mesM[1]) + 1; ym = hoje.getFullYear() + '-' + pad(mi); if (ym > somaMes(mesDe(iso(hoje)), 2)) ym = (hoje.getFullYear() - 1) + '-' + pad(mi); }
       else if (/\b(passad|anterior)\w*/.test(t)) ym = somaMes(ym, -1);
       else if (/\b(proxim|que vem)\w*/.test(t)) ym = somaMes(ym, 1);
+      else ymAuto = true;
       const vM = t.match(/\b(?:vence|vencimento)\D{0,12}(\d{1,2})\b/); const fM = t.match(/\bfecha\w*\D{0,12}(\d{1,2})\b/);
       if ((vM || fM) && !/\b(paguei|quitei)\b/.test(t)) return { tipo: 'config_cartao', cartao: card, diaVenc: vM ? +vM[1] : null, fechamento: fM ? +fM[1] : null };
       if (/\b(paguei|quitei|pago|paga|pagamos)\b/.test(t)) {
         const parcial = val && !/\b(toda|total|inteira|tudo)\b/.test(t);
-        return { tipo: 'pagar_fatura', cartao: card, ym, valor: val ? val.valor : null, parcial: !!parcial };
+        return { tipo: 'pagar_fatura', cartao: card, ym, ymAuto, valor: val ? val.valor : null, parcial: !!parcial };
       }
-      if (/\b(quanto|ver|mostra|como esta|valor|qual)\b/.test(t) || !val) return { tipo: 'ver_fatura', cartao: card, ym };
+      if (/\b(quanto|ver|mostra|como esta|valor|qual)\b/.test(t) || !val) return { tipo: 'ver_fatura', cartao: card, ym, ymAuto };
     }
 
     // COMPROMISSO (sem dinheiro, com data/hora ou palavra-chave)
     const ehCompromisso = /\b(compromisso|consulta|reuniao|lembr\w*|agend\w*|marc\w*|dentista|medico|aniversario|encontro|visita|entrevista|exame|buscar|levar|ligar para|evento|festa|curso)\b/.test(t);
     const ehConta = /\b(conta|boleto|fatura|vence|vencimento|mensalidade|todo dia|todo mes|mensal)\b/.test(t);
+    // "conta do restaurante 120" é um gasto; conta fixa precisa de sinal de vencimento
+    const contaFixa = ehConta && (/\b(vence|vencimento|boleto|mensalidade|todo dia|todo mes|mensal)\b/.test(t) || (/\bdia\s+\d{1,2}\b/.test(t) && !/\b(deu|ficou|saiu|custou|dividi|dividimos|rachei|rachamos)\b/.test(t)));
     if (ehCompromisso && (!val || (hr && !/\b(paguei|gastei|comprei)\b/.test(t))) && !(ehConta && val)) {
-      const titulo = limparDescricao(original, [dt && dt.trecho, hr && hr.trecho, 'compromisso', 'me lembra', 'me lembre', 'lembrete', 'lembrar', 'agendar', 'agenda', 'marcar', 'marca', 'tenho', 'vou ter', 'vou', 'que', 'de', 'as', 'às', 'horas', 'hora', 'amanhã', 'hoje']) || 'Compromisso';
-      return { tipo: 'compromisso', titulo, data: dt ? dt.data : iso(hoje), hora: hr ? hr.hora : '', valor: val ? val.valor : null };
+      const titulo = limparDescricao(original, [dtF && dtF.trecho, hr && hr.trecho, 'compromisso', 'me lembra', 'me lembre', 'lembrete', 'lembrar', 'agendar', 'agenda', 'marcar', 'marca', 'tenho', 'vou ter', 'vou', 'que', 'de', 'as', 'às', 'horas', 'hora', 'amanhã', 'hoje']) || 'Compromisso';
+      return { tipo: 'compromisso', titulo, data: dtF ? dtF.data : iso(hoje), hora: hr ? hr.hora : '', valor: val ? val.valor : null };
     }
 
     // CONTA A PAGAR (vencimento)
-    if (ehConta && !/\b(paguei|gastei)\b/.test(t)) {
+    if (contaFixa && !/\b(paguei|gastei)\b/.test(t)) {
       const diaM = t.match(/\bdia\s+(\d{1,2})\b/);
-      const dia = diaM ? +diaM[1] : (dt ? +dt.data.slice(8, 10) : null);
-      const nome = limparDescricao(original, [val && val.trecho, dt && dt.trecho, diaM && diaM[0], 'conta de', 'conta do', 'conta da', 'conta', 'boleto', 'fatura', 'vence', 'vencimento', 'todo', 'mes', 'mês', 'mensal', 'cadastra', 'cadastrar', 'nova', 'tenho', 'que', 'pagar', 'valor']) || 'Conta';
+      const dia = diaM ? +diaM[1] : (dtF ? +dtF.data.slice(8, 10) : null);
+      const nome = limparDescricao(original, [val && val.trecho, dtF && dtF.trecho, diaM && diaM[0], 'conta de', 'conta do', 'conta da', 'conta', 'boleto', 'fatura', 'vence', 'vencimento', 'todo', 'mes', 'mês', 'mensal', 'cadastra', 'cadastrar', 'nova', 'tenho', 'que', 'pagar', 'valor']) || 'Conta';
       const recorrente = !/\b(so esse mes|uma vez|unica)\b/.test(t);
-      return { tipo: 'conta', nome, valor: val ? val.valor : 0, dia: dia || hoje.getDate(), cat: adivinharCategoria(t + ' ' + sem(nome), opts.categorias) === 'Outros' ? 'Contas da Casa' : adivinharCategoria(t + ' ' + sem(nome), opts.categorias), recorrente, vencimento: dt && !diaM ? dt.data : null };
+      return { tipo: 'conta', nome, valor: val ? val.valor : 0, dia: Math.max(1, Math.min(31, dia || hoje.getDate())), cat: adivinharCategoria(t + ' ' + sem(nome), opts.categorias) === 'Outros' ? 'Contas da Casa' : adivinharCategoria(t + ' ' + sem(nome), opts.categorias), recorrente, vencimento: dtF && !diaM ? dtF.data : null };
     }
 
     if (!val) {
@@ -428,11 +548,11 @@
     }
 
     // PARCELADO
-    const parc = t.match(/\b(?:em\s*)?(\d{1,2})\s*(?:x|vezes|parcelas)\b(?:\s*de\s*(?:r\$\s*)?(\d+(?:[.,]\d{1,2})?))?/);
+    const parc = t.match(/\b(?:em\s*)?(\d{1,2})\s*(?:x|vezes|parcelas)\b(?:\s*de\s*(?:r\$\s*)?(\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?))?/) || t.match(/\bparcel\w*\b.*?\bem\s*(\d{1,2})\b/);
     if (parc && +parc[1] > 1) {
       const n = +parc[1];
       let vp;
-      if (parc[2]) vp = parseFloat(parc[2].replace(',', '.'));
+      if (parc[2]) vp = paraNumero(parc[2]);
       else vp = Math.round((val.valor / n) * 100) / 100;
       const desc = limparDescricao(original, [parc[0], val.trecho, dt && dt.trecho, 'parcelado', 'parcelada', 'vezes']) || 'Compra parcelada';
       const cardP = detectarCartao(t, opts.cartoes, true);
@@ -445,7 +565,7 @@
     const tSemBanco = card && card.trecho ? t.replace(new RegExp('\\b' + card.trecho + '\\b', 'g'), ' ') : t;
     const cat = adivinharCategoria(tSemBanco, opts.categorias);
     const desc = limparDescricao(original, [val.trecho, dt && dt.trecho, card && card.trecho, 'no cartão', 'no crédito', 'no débito', 'no pix', 'paguei', 'pago', 'banco', 'do', 'da']) || cat;
-    return { tipo: 'gasto', valor: val.valor, desc, cat, data: dt ? dt.data : iso(hoje), pagamento: card ? 'Cartão' : pagamento(t), cartao: card && !card.semBanco ? card : null, cartaoSemBanco: !!(card && card.semBanco), paguei: /\bpaguei\b/.test(t) && !card, chave: t };
+    return { tipo: 'gasto', valor: val.valor, desc, cat, data: dt ? dt.data : iso(hoje), pagamento: card ? 'Cartão' : pagamento(t), cartao: card && !card.semBanco ? card : null, cartaoSemBanco: !!(card && card.semBanco), paguei: (/\b(paguei|pagamos)\b/.test(t) || ehConta) && !card, chave: t };
   }
 
   // ------------------------------------------------------------ estado padrão
@@ -454,7 +574,7 @@
       versao: 2,
       perfil: { nome: '', whatsapp: '', orcamento: 0, saldoInicial: 0, lembreteHora: '08:00', ticket: false, tema: 'auto', criadoEm: new Date().toISOString() },
       categorias: CATEGORIAS.map((c) => ({ nome: c.nome, emoji: c.emoji, cor: c.cor, limite: 0 })),
-      lancamentos: [], contas: [], parcelados: [], cartoes: [], anuais: [], sonhos: [{ id: uid(), nome: 'Reserva de emergência', emoji: '🛟', custo: 0, prazo: '', guardadoAntes: 0, aportes: [], upd: Date.now() }],
+      lancamentos: [], contas: [], rendas: [], parcelados: [], cartoes: [], anuais: [], sonhos: [{ id: uid(), nome: 'Reserva de emergência', emoji: '🛟', custo: 0, prazo: '', guardadoAntes: 0, aportes: [], upd: Date.now() }],
       dividas: [], agenda: [], excluidos: [], chat: []
     };
   }
@@ -478,13 +598,80 @@
   }
   function sanearEstado(estado) {
     if (!estado || typeof estado !== 'object') return estado;
-    for (const col of ['lancamentos', 'contas', 'parcelados', 'cartoes', 'anuais', 'sonhos', 'dividas', 'agenda', 'categorias']) if (Array.isArray(estado[col])) estado[col].forEach((x) => sanearItem(x));
+    for (const col of ['lancamentos', 'contas', 'rendas', 'parcelados', 'cartoes', 'anuais', 'sonhos', 'dividas', 'agenda', 'categorias']) if (Array.isArray(estado[col])) estado[col].forEach((x) => sanearItem(x));
     if (estado.perfil) sanearItem(estado.perfil);
     if (Array.isArray(estado.chat)) estado.chat = estado.chat.slice(-200).map((m) => ({ de: m.de === 'me' ? 'me' : 'bot', txt: String(m.txt || '').slice(0, 4000), em: +m.em || 0 }));
     return estado;
   }
 
+  const COLS_DESFAZER = ['lancamentos', 'contas', 'rendas', 'parcelados', 'cartoes', 'anuais', 'sonhos', 'dividas', 'agenda'];
+  const DESFAZIVEIS = new Set(['pagar_conta', 'gasto', 'entrada', 'parcelado', 'config_cartao', 'pagar_fatura', 'conta', 'renda_fixa', 'meta_sonho', 'compromisso', 'resgate', 'sonho', 'excluir']);
+  function fotografar(estado) {
+    const foto = {};
+    for (const col of COLS_DESFAZER) foto[col] = new Map((estado[col] || []).map((x) => [x.id, JSON.stringify(x)]));
+    return foto;
+  }
+  /** O que a última ação criou, alterou ou removeu, para poder voltar exatamente ao estado anterior. */
+  function compararFoto(estado, foto) {
+    const d = { criados: [], alterados: [], removidos: [] };
+    for (const col of COLS_DESFAZER) {
+      const antes = foto[col]; const vistos = new Set();
+      for (const it of estado[col] || []) {
+        vistos.add(it.id);
+        if (!antes.has(it.id)) d.criados.push({ col, id: it.id });
+        else if (antes.get(it.id) !== JSON.stringify(it)) d.alterados.push({ col, item: JSON.parse(antes.get(it.id)) });
+      }
+      for (const [id, txt] of antes) if (!vistos.has(id)) d.removidos.push({ col, item: JSON.parse(txt) });
+    }
+    return d.criados.length || d.alterados.length || d.removidos.length ? d : null;
+  }
+  function rotuloDesfazer(acao, r) {
+    const it = r.item || r.removido || {};
+    switch (acao.tipo) {
+      case 'gasto': return r.colecao === 'contas' ? `pagamento da conta ${it.nome}` : `${acao.desc || acao.cat} (${brl(acao.valor)})`;
+      case 'pagar_conta': return `pagamento da conta ${it.nome}`;
+      case 'pagar_fatura': return `pagamento da fatura ${it.nome}`;
+      case 'config_cartao': return `ajuste do cartão ${it.nome}`;
+      case 'entrada': return `${acao.desc || acao.cat} (${brl(acao.valor)})`;
+      case 'parcelado': return `${acao.desc} (${acao.n}x de ${brl(acao.valorParcela)})`;
+      case 'conta': return `conta ${it.nome}`;
+      case 'renda_fixa': return `renda fixa ${it.nome}`;
+      case 'meta_sonho': return `meta do sonho ${it.nome}`;
+      case 'compromisso': return `compromisso ${it.titulo}`;
+      case 'sonho': return `${brl(acao.valor)} guardados em ${it.nome}`;
+      case 'resgate': return `retirada de ${brl(acao.valor)}`;
+      case 'excluir': return `exclusão de ${it.desc || it.titulo || it.nome || it.cat}`;
+      default: return 'última ação';
+    }
+  }
+  /** Aplica a ação e guarda como desfazê-la. */
   function aplicar(estado, acao, opts) {
+    const foto = acao && DESFAZIVEIS.has(acao.tipo) ? fotografar(estado) : null;
+    const r = executar(estado, acao, opts);
+    if (foto) {
+      const d = compararFoto(estado, foto);
+      if (d) { d.rotulo = rotuloDesfazer(acao, r); d.em = Date.now(); estado.desfazer = (estado.desfazer || []).concat([d]).slice(-5); r.podeDesfazer = true; }
+    }
+    return r;
+  }
+  function desfazerUltima(estado) {
+    const u = (estado.desfazer || []).pop();
+    if (!u) return { ok: false, msg: 'Não há nada para desfazer. 🙂' };
+    const now = Date.now();
+    for (const x of u.criados) remover(estado, x.col, x.id);
+    for (const x of u.alterados) {
+      const lista = estado[x.col] = estado[x.col] || [];
+      const i = lista.findIndex((y) => y.id === x.item.id);
+      const item = Object.assign({}, x.item, { upd: now });
+      if (i >= 0) lista[i] = item; else lista.push(item);
+    }
+    // o item volta com id novo: o antigo ficou marcado como excluído nos outros aparelhos
+    const novos = {};
+    for (const x of u.removidos) { const id = uid(); novos[x.item.id] = id; (estado[x.col] = estado[x.col] || []).push(Object.assign({}, x.item, { id, upd: now })); }
+    for (const s of estado.sonhos || []) for (const ap of s.aportes || []) if (ap.entradaId && novos[ap.entradaId]) ap.entradaId = novos[ap.entradaId];
+    return { ok: true, colecao: 'lancamentos', msg: `↩️ Desfeito: ${u.rotulo}.` };
+  }
+  function executar(estado, acao, opts) {
     opts = opts || {};
     for (const k of ['valor', 'valorParcela']) if (acao && typeof acao[k] === 'number' && Math.abs(acao[k]) > LIMITE_VALOR) return { ok: false, msg: '🙈 O valor máximo é R$ 99.000.000,00. Confere o valor pra mim?' };
     for (const k of ['desc', 'titulo', 'nome', 'termo']) if (acao && typeof acao[k] === 'string') acao[k] = acao[k].slice(0, LIMITE_TEXTO);
@@ -495,21 +682,23 @@
     const catInfo = (n) => (estado.categorias || []).find((c) => c.nome === n) || CATEGORIAS.find((c) => c.nome === n) || { emoji: '✨' };
     switch (acao.tipo) {
       case 'pagar_conta': {
-        const c = acharConta(estado, acao.chave);
+        const ym = mesDe(acao.data || iso(hoje));
+        const c = acharConta(estado, acao.chave, ym);
         if (!c) return { ok: false, msg: 'Não encontrei essa conta cadastrada. 🤔 Me diga o valor, ex.: "paguei 120 de luz".' };
-        const ym = mesDe(acao.data || iso(hoje)); c.pagos = c.pagos || {}; c.pagos[ym] = true; c.upd = now;
-        return { ok: true, item: c, colecao: 'contas', msg: `✅ Marquei *${c.nome}* (${brl(c.valor)}) como paga em ${nomeMes(ym)}. Uma preocupação a menos! 😌` };
+        c.pagos = c.pagos || {}; c.pagos[ym] = true; c.upd = now;
+        return { ok: true, item: c, colecao: 'contas', msg: `✅ Marquei *${c.nome}* (${brl(valorConta(c, ym))}) como paga em ${nomeMes(ym)}. Uma preocupação a menos! 😌` };
       }
       case 'gasto': {
         if (acao.paguei) {
-          const c = acharConta(estado, acao.chave);
-          if (c) { const ym = mesDe(acao.data); c.pagos = c.pagos || {}; c.pagos[ym] = true; if (acao.valor) c.valor = acao.valor; c.upd = now; return { ok: true, item: c, colecao: 'contas', msg: `✅ Conta *${c.nome}* paga: ${brl(c.valor)} em ${nomeMes(ym)}. Uma preocupação a menos! 😌` }; }
+          const ym = mesDe(acao.data);
+          const c = acharConta(estado, acao.chave, ym);
+          if (c) { c.pagos = c.pagos || {}; c.pagos[ym] = true; if (acao.valor) definirValorConta(c, ym, acao.valor); c.upd = now; return { ok: true, item: c, colecao: 'contas', msg: `✅ Conta *${c.nome}* paga: ${brl(valorConta(c, ym))} em ${nomeMes(ym)}. Uma preocupação a menos! 😌` }; }
         }
         const cc = garantirCartao(estado, acao.cartao);
         const item = { id: uid(), tipo: 'gasto', data: acao.data, desc: acao.desc, cat: acao.cat, valor: acao.valor, pago: !cc && acao.pagamento !== 'Cartão', pagamento: cc ? 'Cartão' : (acao.pagamento || ''), cartaoId: cc ? cc.id : undefined, origem, upd: now };
         estado.lancamentos.push(item);
         let txtCartao = '';
-        if (cc) { const f = fatura(estado, cc.id, mesFatura(cc, acao.data), hoje); txtCartao = `\n💳 Lançado no cartão *${cc.nome}* — fatura de ${mesCurto(f.ym)}: ${brl(f.total)}.`; }
+        if (cc) { const f = fatura(estado, cc.id, mesFatura(cc, acao.data), hoje); txtCartao = `\n💳 Lançado no cartão *${cc.nome}* — fatura que vence em ${dataBR(f.venc)}: ${brl(f.total)}.`; if (acao.cartao.novo) txtCartao += `\n💡 Para acertar as datas, me diga: "a fatura do ${cc.nome} vence dia 10 e fecha dia 3".`; }
         else if (acao.pagamento && acao.pagamento !== 'Cartão') txtCartao = `\n✅ Pago no ${acao.pagamento === 'Dinheiro' ? 'dinheiro' : acao.pagamento} — já saiu do seu saldo do mês.`;
         else if (acao.cartaoSemBanco) txtCartao = (estado.cartoes || []).length ? `\n💳 Em qual cartão? Diga, por ex.: "no cartão ${(estado.cartoes[0] || {}).nome}".` : '\n💳 Dica: diga o banco ("cartão de crédito Itaú") que eu separo por cartão.';
         const r = resumoMes(estado, mesDe(acao.data));
@@ -524,6 +713,19 @@
         return { ok: true, item, colecao: 'lancamentos', msg: `${catInfo(acao.cat).emoji} Anotado! ${brl(acao.valor)} em *${acao.cat}*${acao.desc && acao.desc !== acao.cat ? ` (${acao.desc})` : ''} — ${dataBR(acao.data)}.${txtCartao}${extra}` };
       }
       case 'entrada': {
+        const ymE = mesDe(acao.data);
+        const rf = acharRenda(estado, acao.cat, ymE);
+        if (rf) {
+          // renda fixa: a entrada deste mês é uma só; lançar de novo só ajusta o valor
+          const idR = idRenda(rf, ymE);
+          const ja = estado.lancamentos.find((l) => l.id === idR || (l.rendaId === rf.id && mesDe(l.data) === ymE));
+          rf.lancados = rf.lancados || {}; rf.lancados[ymE] = true; rf.upd = now;
+          if (ja) { ja.valor = acao.valor; ja.data = acao.data; ja.upd = now; return { ok: true, item: ja, colecao: 'lancamentos', msg: `💰 Atualizei *${rf.nome}* de ${nomeMes(ymE)} para ${brl(acao.valor)}.` }; }
+          const excluido = (estado.excluidos || []).some((x) => x.id === idR);
+          const itemR = { id: excluido ? uid() : idR, tipo: 'entrada', data: acao.data, desc: acao.desc, cat: acao.cat, valor: acao.valor, pago: true, origem, rendaId: rf.id, upd: now };
+          estado.lancamentos.push(itemR);
+          return { ok: true, item: itemR, colecao: 'lancamentos', msg: `💰 Que notícia boa${nomeP ? ', ' + nomeP : ''}! Entrada de ${brl(acao.valor)} (${acao.cat}) registrada.` };
+        }
         const item = { id: uid(), tipo: 'entrada', data: acao.data, desc: acao.desc, cat: acao.cat, valor: acao.valor, pago: true, origem, upd: now };
         estado.lancamentos.push(item);
         return { ok: true, item, colecao: 'lancamentos', msg: `💰 Que notícia boa${nomeP ? ', ' + nomeP : ''}! Entrada de ${brl(acao.valor)} (${acao.cat}) registrada.` };
@@ -546,28 +748,55 @@
         if (!cartoes.length) return { ok: false, msg: '💳 Você ainda não tem cartões cadastrados. Lance um gasto assim: "gastei 50 no mercado no cartão de crédito Itaú" que eu crio o cartão.' };
         const cc = acao.cartao && acao.cartao.id ? cartoes.find((c) => c.id === acao.cartao.id) : cartoes.length === 1 ? cartoes[0] : null;
         if (!cc) {
-          if (acao.tipo === 'ver_fatura') return { ok: true, msg: '💳 *Faturas de ' + nomeMes(acao.ym) + '*\n' + cartoes.map((c) => { const f = fatura(estado, c.id, acao.ym, hoje); return `• ${c.nome}: ${brl(f.total)} — ${rotuloFatura(f)}`; }).join('\n') };
+          if (acao.tipo === 'ver_fatura') return { ok: true, msg: '💳 *Suas faturas*\n' + cartoes.map((c) => { const f = fatura(estado, c.id, acao.ymAuto ? faturaDaVez(estado, c, hoje) : acao.ym, hoje); return `• ${c.nome}: ${brl(f.total)}, vence ${dataBR(f.venc)} — ${rotuloFatura(f)}`; }).join('\n') };
           return { ok: false, msg: 'Qual cartão? 🤔 ' + cartoes.map((c) => c.nome).join(', ') + '.\nEx.: "paguei a fatura do ' + cartoes[0].nome + '"' };
         }
-        const f = fatura(estado, cc.id, acao.ym, hoje);
-        if (acao.tipo === 'ver_fatura') return { ok: true, msg: `💳 *Fatura ${cc.nome} — ${nomeMes(acao.ym)}*\nTotal: ${brl(f.total)}${f.anterior ? ` (inclui ${brl(f.anterior)} do mês anterior)` : ''}\nVence dia ${f.venc.slice(8)} · ${rotuloFatura(f)}${f.situacao === 'parcial' ? `\nPago ${brl(f.pago)} · falta ${brl(f.falta)}` : ''}\n\nQuando pagar, me diga: "paguei a fatura do ${cc.nome}" ou "paguei 500 da fatura do ${cc.nome}".` };
+        const ymF = acao.ymAuto ? faturaDaVez(estado, cc, hoje) : acao.ym;
+        const f = fatura(estado, cc.id, ymF, hoje);
+        if (acao.tipo === 'ver_fatura') return { ok: true, msg: `💳 *Fatura ${cc.nome} — ${nomeMes(ymF)}*\nTotal: ${brl(f.total)}${f.anterior ? ` (inclui ${brl(f.anterior)} do mês anterior)` : ''}\nVence em ${dataBR(f.venc)} · ${rotuloFatura(f)}${f.situacao === 'parcial' ? `\nPago ${brl(f.pago)} · falta ${brl(f.falta)}` : ''}\n\nQuando pagar, me diga: "paguei a fatura do ${cc.nome}" ou "paguei 500 da fatura do ${cc.nome}".` };
         const parcial = acao.parcial && acao.valor != null && acao.valor < f.total - 0.005;
-        pagarFatura(estado, cc.id, acao.ym, parcial ? 'parcial' : 'total', acao.valor);
-        const f2 = fatura(estado, cc.id, acao.ym, hoje);
-        if (parcial) return { ok: true, item: cc, colecao: 'cartoes', msg: `💳 Pagamento parcial registrado na fatura *${cc.nome}* de ${mesCurto(acao.ym)}: pago ${brl(f2.pago)} de ${brl(f2.total)}.\n⚠️ Ficou faltando ${brl(f2.falta)} — vai aparecer na próxima fatura. Cuidado com os juros do rotativo! 💛` };
-        return { ok: true, item: cc, colecao: 'cartoes', msg: `✅ Fatura *${cc.nome}* de ${mesCurto(acao.ym)} paga: ${brl(f2.total)}. Uma preocupação a menos! 😌` };
+        pagarFatura(estado, cc.id, ymF, parcial ? 'parcial' : 'total', acao.valor);
+        const f2 = fatura(estado, cc.id, ymF, hoje);
+        if (parcial) return { ok: true, item: cc, colecao: 'cartoes', msg: `💳 Pagamento parcial registrado na fatura *${cc.nome}* de ${mesCurto(ymF)}: pago ${brl(f2.pago)} de ${brl(f2.total)}.\n⚠️ Ficou faltando ${brl(f2.falta)} — vai aparecer na próxima fatura. Cuidado com os juros do rotativo! 💛` };
+        return { ok: true, item: cc, colecao: 'cartoes', msg: `✅ Fatura *${cc.nome}* de ${mesCurto(ymF)} paga: ${brl(f2.total)}. Uma preocupação a menos! 😌` };
       }
       case 'conta': {
         const existente = estado.contas.find((c) => sem(c.nome) === sem(acao.nome));
-        if (existente) { existente.valor = acao.valor || existente.valor; existente.dia = acao.dia; existente.upd = now; return { ok: true, item: existente, colecao: 'contas', msg: `🗓️ Atualizei a conta *${existente.nome}*: vence todo dia ${existente.dia}${existente.valor ? ', ' + brl(existente.valor) : ''}. Vou te lembrar um dia antes e no dia. 😉` }; }
-        const item = { id: uid(), nome: acao.nome, cat: acao.cat, valor: acao.valor, dia: acao.dia, recorrente: acao.recorrente !== false, mesUnico: acao.recorrente === false ? mesDe(acao.vencimento || iso(hoje)) : '', pagos: {}, origem, upd: now };
+        const ymC = mesDe(acao.vencimento || iso(hoje));
+        if (existente) { if (acao.valor) definirValorConta(existente, ymC, acao.valor); existente.dia = acao.dia; delete existente.ate; existente.upd = now; return { ok: true, item: existente, colecao: 'contas', msg: `🗓️ Atualizei a conta *${existente.nome}*: vence todo dia ${existente.dia}${valorConta(existente, ymC) ? ', ' + brl(valorConta(existente, ymC)) : ''}. Vou te lembrar um dia antes e no dia. 😉` }; }
+        const item = { id: uid(), nome: acao.nome, cat: acao.cat, valor: acao.valor, dia: acao.dia, recorrente: acao.recorrente !== false, mesUnico: acao.recorrente === false ? ymC : '', desde: ymC, pagos: {}, origem, upd: now };
         estado.contas.push(item);
         return { ok: true, item, colecao: 'contas', msg: `🗓️ Conta cadastrada: *${acao.nome}*${acao.valor ? ' — ' + brl(acao.valor) : ''}, vence dia ${acao.dia}. Pode deixar que eu te lembro um dia antes e no dia do vencimento. 💙` };
       }
+      case 'renda_fixa': {
+        estado.rendas = estado.rendas || [];
+        const ymR = mesDe(iso(hoje));
+        const exR = estado.rendas.find((r) => sem(r.nome) === sem(acao.nome) && contaNoMes(r, ymR));
+        if (exR) {
+          definirValorConta(exR, ymR, acao.valor); exR.dia = acao.dia; exR.upd = now;
+          const l = estado.lancamentos.find((x) => x.rendaId === exR.id && mesDe(x.data) === ymR); if (l) { l.valor = acao.valor; l.upd = now; }
+          return { ok: true, item: exR, colecao: 'rendas', msg: `💰 Atualizei *${exR.nome}*: ${brl(acao.valor)}, todo dia ${exR.dia}. 💙` };
+        }
+        const itemR = { id: uid(), nome: acao.nome, cat: acao.cat, valor: acao.valor, dia: Math.max(1, Math.min(31, +acao.dia || 5)), desde: ymR, lancados: {}, origem, upd: now };
+        // se este mês já foi lançado à mão, não lança de novo
+        if (estado.lancamentos.some((l) => l.tipo === 'entrada' && mesDe(l.data) === ymR && l.cat === acao.cat)) itemR.lancados[ymR] = true;
+        estado.rendas.push(itemR);
+        garantirRendas(estado, hoje);
+        return { ok: true, item: itemR, colecao: 'rendas', msg: `💰 Renda fixa cadastrada: *${itemR.nome}*, ${brl(itemR.valor)} todo dia ${itemR.dia}. Ela entra sozinha todo mês, sem você lançar. 💙` };
+      }
+      case 'meta_sonho': {
+        estado.sonhos = estado.sonhos || [];
+        let s = acharSonho(estado.sonhos, acao.nome); let criado = false;
+        if (s) { s.custo = acao.valor; s.upd = now; }
+        else { s = { id: uid(), nome: acao.nome, emoji: '⭐', custo: acao.valor, prazo: '', guardadoAntes: 0, aportes: [], upd: now }; estado.sonhos.push(s); criado = true; }
+        return { ok: true, item: s, colecao: 'sonhos', msg: `🌈 ${criado ? 'Sonho criado' : 'Meta atualizada'}: *${s.nome}*, ${brl(acao.valor)}. Quando guardar, me diga: "guardei 200 para ${s.nome.toLowerCase()}". ⭐` };
+      }
+      case 'plano': return { ok: true, msg: '💭 Entendi isso como um plano ou uma pergunta, então não lancei nada.\nQuando acontecer, me diga: "comprei ...", "paguei ..." ou "guardei ...".' };
       case 'compromisso': {
         const item = { id: uid(), titulo: acao.titulo, data: acao.data, hora: acao.hora || '', lembrar: true, feito: false, origem, upd: now };
         estado.agenda.push(item);
-        return { ok: true, item, colecao: 'agenda', msg: `📌 Compromisso anotado: *${acao.titulo}* — ${dataBR(acao.data)}${acao.hora ? ' às ' + acao.hora : ''}. Eu te lembro no dia${acao.hora ? ' e 1 hora antes' : ''}! ⏰` };
+        const jaPassou = acao.data < iso(hoje);
+        return { ok: true, item, colecao: 'agenda', msg: `📌 Compromisso anotado: *${acao.titulo}* — ${dataBR(acao.data)}${acao.hora ? ' às ' + acao.hora : ''}. ${jaPassou ? '⚠️ Essa data já passou, então não vou lembrar. Confere pra mim?' : `Eu te lembro no dia${acao.hora ? ' e 1 hora antes' : ''}! ⏰`}` };
       }
       case 'resgate': {
         const sonhos = estado.sonhos || [];
@@ -601,41 +830,15 @@
         return { ok: true, item: s, colecao: 'sonhos', msg: `${criado ? `🌈 Criei o sonho *${s.nome}* para você!\n` : ''}⭐ Uhuul! ${brl(acao.valor)} ${acao.investir ? 'investidos' : 'guardados'} em *${s.nome}*.${s.custo ? ` Você já está em ${pct}% do caminho (${brl(tot)} de ${brl(s.custo)}).` : ''} Cada passo conta! 🚀` };
       }
       case 'excluir': {
-        if (acao.alvo === 'agenda') {
-          const cand = estado.agenda.filter((a) => !acao.termo || acao.termo.split(' ').some((p) => p.length > 2 && sem(a.titulo).includes(p)));
-          const a = cand.sort((x, y) => (y.upd || 0) - (x.upd || 0))[0];
-          if (!a) return { ok: false, msg: 'Não encontrei esse compromisso. 🤔' };
-          remover(estado, 'agenda', a.id);
-          return { ok: true, removido: a, colecao: 'agenda', msg: `🗑️ Compromisso *${a.titulo}* removido.` };
-        }
-        if (acao.alvo === 'conta') {
-          const c = estado.contas.find((x) => acao.termo && acao.termo.split(' ').some((p) => p.length > 2 && sem(x.nome).includes(p)));
-          if (!c) return { ok: false, msg: 'Não encontrei essa conta. 🤔' };
-          remover(estado, 'contas', c.id);
-          return { ok: true, removido: c, colecao: 'contas', msg: `🗑️ Conta *${c.nome}* removida.` };
-        }
-        const termos = (acao.termo || '').split(' ').filter((p) => p.length > 2 && !['gasto', 'lancamento', 'ultimo', 'valor', 'reais', 'aquele', 'esse'].includes(p));
-        let cand = estado.lancamentos.slice();
-        if (acao.valor != null) cand = cand.filter((l) => Math.abs(l.valor - acao.valor) < 0.005);
-        if (acao.data) cand = cand.filter((l) => l.data === acao.data);
-        if (termos.length) {
-          const c2 = cand.filter((l) => termos.some((p) => sem(l.desc + ' ' + l.cat).includes(p)));
-          if (c2.length || acao.valor == null) cand = c2;
-        }
-        if (!cand.length) return { ok: false, msg: `Não encontrei esse lançamento${acao.valor != null ? ' de ' + brl(acao.valor) : ''}. Confere pra mim? 🤔` };
-        const l = cand.sort((a, b) => (b.upd || 0) - (a.upd || 0))[0];
-        remover(estado, 'lancamentos', l.id);
+        const alvo = acharExclusao(estado, acao);
+        if (!alvo.item) return { ok: false, msg: alvo.msg };
+        if (alvo.col === 'contas') { encerrarConta(estado, alvo.item.id, mesDe(iso(hoje))); return { ok: true, removido: alvo.item, colecao: 'contas', msg: `🗑️ Conta *${alvo.item.nome}* encerrada. Os meses anteriores continuam no seu histórico.` }; }
+        remover(estado, alvo.col, alvo.item.id);
+        if (alvo.col === 'agenda') return { ok: true, removido: alvo.item, colecao: 'agenda', msg: `🗑️ Compromisso *${alvo.item.titulo}* removido.` };
+        const l = alvo.item;
         return { ok: true, removido: l, colecao: 'lancamentos', msg: `🗑️ Prontinho! Excluí ${l.tipo === 'entrada' ? 'a entrada' : 'o gasto'} de ${brl(l.valor)} (${l.desc || l.cat}, ${dataBR(l.data)}).` };
       }
-      case 'desfazer': {
-        const todos = [];
-        for (const col of ['lancamentos', 'agenda', 'contas', 'parcelados']) for (const it of estado[col] || []) if (it.origem === origem || !opts.soOrigem) todos.push({ col, it });
-        todos.sort((a, b) => (b.it.upd || 0) - (a.it.upd || 0));
-        const u = todos[0];
-        if (!u) return { ok: false, msg: 'Não há nada para desfazer. 🙂' };
-        remover(estado, u.col, u.it.id);
-        return { ok: true, removido: u.it, colecao: u.col, msg: `↩️ Desfeito: ${u.it.desc || u.it.titulo || u.it.nome}${u.it.valor ? ' (' + brl(u.it.valor) + ')' : ''}.` };
-      }
+      case 'desfazer': return desfazerUltima(estado);
       case 'resumo': return { ok: true, msg: textoResumo(estado, mesDe(iso(hoje)), hoje) };
       case 'contas_pendentes': return { ok: true, msg: textoContas(estado, hoje) };
       case 'agenda_hoje': return { ok: true, msg: textoAgenda(estado, hoje) };
@@ -644,15 +847,48 @@
     }
   }
 
-  function acharConta(estado, chave) {
+  function acharConta(estado, chave, ym) {
     const t = ' ' + sem(chave) + ' ';
     let melhor = null, pts = 0;
     for (const c of estado.contas || []) {
+      if (ym && !contaNoMes(c, ym)) continue;
       const ps = sem(c.nome).split(/\s+/).filter((p) => p.length > 2 && !['conta', 'apto', 'casa', 'das', 'dos', 'para'].includes(p));
       const n = ps.filter((p) => t.includes(' ' + p)).length;
       if (n > pts) { pts = n; melhor = c; }
     }
     return melhor;
+  }
+  /** Encontra o que a pessoa pediu para excluir, sem excluir ainda. */
+  function acharExclusao(estado, acao) {
+    if (acao.alvoId) {
+      const item = (estado[acao.alvoCol] || []).find((x) => x.id === acao.alvoId);
+      return item ? { col: acao.alvoCol, item } : { msg: 'Esse item já não existe. 🙂' };
+    }
+    if (acao.alvo === 'agenda') {
+      const cand = estado.agenda.filter((a) => !acao.termo || acao.termo.split(' ').some((p) => p.length > 2 && sem(a.titulo).includes(p)));
+      const a = cand.sort((x, y) => (y.upd || 0) - (x.upd || 0))[0];
+      return a ? { col: 'agenda', item: a } : { msg: 'Não encontrei esse compromisso. 🤔' };
+    }
+    if (acao.alvo === 'conta') {
+      const c = estado.contas.find((x) => acao.termo && contaNoMes(x, mesDe(iso(new Date()))) && acao.termo.split(' ').some((p) => p.length > 2 && sem(x.nome).includes(p)));
+      return c ? { col: 'contas', item: c } : { msg: 'Não encontrei essa conta. 🤔' };
+    }
+    const termos = (acao.termo || '').split(' ').filter((p) => p.length > 2 && !['gasto', 'lancamento', 'ultimo', 'valor', 'reais', 'aquele', 'esse'].includes(p));
+    let cand = estado.lancamentos.slice();
+    if (acao.valor != null) cand = cand.filter((l) => Math.abs(l.valor - acao.valor) < 0.005);
+    if (acao.data) cand = cand.filter((l) => l.data === acao.data);
+    if (termos.length) {
+      const c2 = cand.filter((l) => termos.some((p) => sem(l.desc + ' ' + l.cat).includes(p)));
+      if (c2.length || acao.valor == null) cand = c2;
+    }
+    if (!cand.length) return { msg: `Não encontrei esse lançamento${acao.valor != null ? ' de ' + brl(acao.valor) : ''}. Confere pra mim? 🤔` };
+    return { col: 'lancamentos', item: cand.sort((a, b) => (b.upd || 0) - (a.upd || 0))[0] };
+  }
+  function descreverAlvo(alvo) {
+    const x = alvo.item;
+    if (alvo.col === 'agenda') return `o compromisso *${x.titulo}*`;
+    if (alvo.col === 'contas') return `a conta *${x.nome}*`;
+    return `${x.tipo === 'entrada' ? 'a entrada' : 'o gasto'} de ${brl(x.valor)} (${x.desc || x.cat}, ${dataBR(x.data)})`;
   }
   function rotuloFatura(f) { return { paga: '✅ Paga', parcial: '🟡 Paga parcialmente', vencida: '🔴 Vencida', aberta: '⏳ Em aberto', vazia: 'Sem compras' }[f.situacao]; }
   function remover(estado, col, id) {
@@ -707,15 +943,71 @@
     return k >= 0 && k < p.n ? k + 1 : 0;
   }
   function contaNoMes(c, ym) { return c.recorrente !== false ? (!c.desde || c.desde <= ym) && (!c.ate || c.ate >= ym) : c.mesUnico === ym; }
+  /** Valor de uma conta ou renda fixa naquele mês: mudar o valor agora não reescreve os meses passados. */
+  function valorConta(c, ym) {
+    const h = c && c.hist;
+    if (!h || !h.length) return Number(c && c.valor) || 0;
+    let v = h[0].valor;
+    for (const x of h) if (x.de <= ym) v = x.valor;
+    return Number(v) || 0;
+  }
+  function definirValorConta(c, ym, valor) {
+    valor = Number(valor) || 0;
+    if (valorConta(c, ym) === valor) return;
+    const h = (c.hist && c.hist.length ? c.hist : [{ de: c.desde || '0000-00', valor: Number(c.valor) || 0 }]).filter((x) => x.de !== ym);
+    h.push({ de: ym, valor });
+    h.sort((a, b) => a.de.localeCompare(b.de));
+    c.hist = h; c.valor = h[h.length - 1].valor; c.upd = Date.now();
+  }
+  /** Parar uma conta fixa sem apagar o que ela representou nos meses anteriores. */
+  function encerrarConta(estado, id, ym, col) {
+    col = col || 'contas';
+    const c = (estado[col] || []).find((x) => x.id === id); if (!c) return;
+    const feito = col === 'rendas' ? c.lancados : c.pagos;
+    if (c.recorrente === false || (c.desde && c.desde >= ym && !(feito && feito[ym]))) { remover(estado, col, id); return; }
+    c.ate = feito && feito[ym] ? ym : somaMes(ym, -1);
+    c.upd = Date.now();
+  }
+
+  // ---------------------------------------------------------------- renda fixa
+  const idRenda = (r, ym) => 'rf-' + r.id + '-' + ym;
+  function acharRenda(estado, cat, ym) {
+    if (!cat || cat === 'Outra renda') return null;
+    return (estado.rendas || []).find((r) => r.cat === cat && contaNoMes(r, ym)) || null;
+  }
+  /** Lança as rendas fixas que já chegaram. O id é fixo por mês: celular e servidor nunca duplicam. */
+  function garantirRendas(estado, hoje) {
+    let mudou = false;
+    const ymHoje = mesDe(iso(hoje));
+    const excl = new Set((estado.excluidos || []).map((x) => x.id));
+    estado.lancamentos = estado.lancamentos || [];
+    for (const r of estado.rendas || []) {
+      r.lancados = r.lancados || {};
+      let ym = r.desde || ymHoje;
+      for (let i = 0; i < 36 && ym <= ymHoje; i++, ym = somaMes(ym, 1)) {
+        if (r.lancados[ym] || !contaNoMes(r, ym)) continue;
+        const dia = Math.min(+r.dia || 1, diasNoMes(ym));
+        if (ym === ymHoje && hoje.getDate() < dia) continue;
+        const id = idRenda(r, ym);
+        r.lancados[ym] = true; r.upd = Date.now(); mudou = true;
+        if (excl.has(id) || estado.lancamentos.some((l) => l.id === id)) continue;
+        estado.lancamentos.push({ id, tipo: 'entrada', data: ym + '-' + pad(dia), desc: r.nome, cat: r.cat, valor: valorConta(r, ym), pago: true, origem: 'renda_fixa', rendaId: r.id, upd: Date.now() });
+      }
+    }
+    return mudou;
+  }
 
   function resumoMes(estado, ym) {
     const L = (estado.lancamentos || []).filter((l) => mesDe(l.data) === ym);
-    const entradas = L.filter((l) => l.tipo === 'entrada').reduce((a, b) => a + b.valor, 0);
+    const entradasReais = L.filter((l) => l.tipo === 'entrada').reduce((a, b) => a + b.valor, 0);
+    // renda fixa que ainda vai cair neste mês
+    const previsto = (estado.rendas || []).filter((r) => contaNoMes(r, ym) && !(r.lancados && r.lancados[ym])).reduce((a, b) => a + valorConta(b, ym), 0);
+    const entradas = entradasReais + previsto;
     const gastosDia = L.filter((l) => l.tipo === 'gasto' && !l.ticket).reduce((a, b) => a + b.valor, 0);
     const ticketGasto = L.filter((l) => l.tipo === 'gasto' && l.ticket).reduce((a, b) => a + b.valor, 0);
     const contas = (estado.contas || []).filter((c) => contaNoMes(c, ym));
-    const fixas = contas.reduce((a, b) => a + (Number(b.valor) || 0), 0);
-    const fixasPagas = contas.filter((c) => c.pagos && c.pagos[ym]).reduce((a, b) => a + (Number(b.valor) || 0), 0);
+    const fixas = contas.reduce((a, b) => a + valorConta(b, ym), 0);
+    const fixasPagas = contas.filter((c) => c.pagos && c.pagos[ym]).reduce((a, b) => a + valorConta(b, ym), 0);
     const parcs = (estado.parcelados || []).map((p) => ({ p, k: parcelaNoMes(p, ym) })).filter((x) => x.k);
     const parcelas = parcs.reduce((a, b) => a + b.p.valor, 0);
     const guardado = (estado.sonhos || []).reduce((a, s) => a + (s.aportes || []).filter((x) => mesDe(x.data) === ym && contaNoGuardado(x)).reduce((q, w) => q + (Number(w.valor) || 0), 0), 0);
@@ -725,7 +1017,7 @@
     const sobra = sobraAntes - guardado;
     const porCategoria = {};
     L.filter((l) => l.tipo === 'gasto').forEach((l) => { porCategoria[l.cat] = (porCategoria[l.cat] || 0) + l.valor; });
-    contas.forEach((c) => { porCategoria[c.cat] = (porCategoria[c.cat] || 0) + (Number(c.valor) || 0); });
+    contas.forEach((c) => { porCategoria[c.cat] = (porCategoria[c.cat] || 0) + valorConta(c, ym); });
     parcs.forEach((x) => { porCategoria[x.p.cat] = (porCategoria[x.p.cat] || 0) + x.p.valor; });
     const orcamento = Number(estado.perfil && estado.perfil.orcamento) || entradas;
     const _ym = ym;
@@ -736,7 +1028,7 @@
     saldoAcum += sobra;
     const maior = Object.entries(porCategoria).sort((a, b) => b[1] - a[1])[0];
     return {
-      ym, entradas, gastosDia, ticketGasto, fixas, fixasPagas, parcelas, parcs, contas, guardado, gastoTotal, sobraAntes, sobra, saldoAcum, porCategoria, orcamento,
+      ym, entradas, entradasReais, previsto, gastosDia, ticketGasto, fixas, fixasPagas, parcelas, parcs, contas, guardado, gastoTotal, sobraAntes, sobra, saldoAcum, porCategoria, orcamento,
       pctOrcamento: orcamento > 0 ? gastoTotal / orcamento : 0, pctGuardado: entradas > 0 ? guardado / entradas : 0,
       maiorCategoria: maior ? { nome: maior[0], valor: maior[1] } : null, anuaisMes, lancamentos: L,
       // dinheiro que já saiu de fato: gastos pagos (dinheiro, pix, débito), contas pagas, faturas pagas e o que foi guardado
@@ -747,7 +1039,7 @@
     const L = (estado.lancamentos || []).filter((l) => mesDe(l.data) === ym);
     const e = L.filter((l) => l.tipo === 'entrada').reduce((a, b) => a + b.valor, 0);
     const g = L.filter((l) => l.tipo === 'gasto' && !l.ticket).reduce((a, b) => a + b.valor, 0);
-    const f = (estado.contas || []).filter((c) => contaNoMes(c, ym)).reduce((a, b) => a + (Number(b.valor) || 0), 0);
+    const f = (estado.contas || []).filter((c) => contaNoMes(c, ym)).reduce((a, b) => a + valorConta(b, ym), 0);
     const p = (estado.parcelados || []).filter((x) => parcelaNoMes(x, ym)).reduce((a, b) => a + b.valor, 0);
     const s = (estado.sonhos || []).reduce((a, q) => a + (q.aportes || []).filter((x) => mesDe(x.data) === ym && contaNoGuardado(x)).reduce((z, w) => z + (Number(w.valor) || 0), 0), 0);
     return e - g - f - p - s;
@@ -770,7 +1062,7 @@
       for (const c of estado.contas || []) {
         if (!contaNoMes(c, ym)) continue;
         const dia = Math.min(+c.dia, ultimo);
-        if (dia === d.getDate() && !(c.pagos && c.pagos[ym])) out.push({ conta: c, data: iso(d), emDias: i, ym });
+        if (dia === d.getDate() && !(c.pagos && c.pagos[ym])) out.push({ conta: c, data: iso(d), emDias: i, ym, valor: valorConta(c, ym) });
       }
       for (const p of estado.parcelados || []) { /* cartão: lembrado pela fatura */ }
     }
@@ -785,7 +1077,7 @@
   function textoResumo(estado, ym, hoje) {
     const r = resumoMes(estado, ym);
     const nome = estado.perfil && estado.perfil.nome ? estado.perfil.nome : '';
-    let s = `📊 *Resumo de ${nomeMes(ym)}*${nome ? ' — ' + nome : ''}\n\n💰 Entrou: ${brl(r.entradas)}\n🛒 Gastos: ${brl(r.gastoTotal)}\n   • Contas fixas: ${brl(r.fixas)}\n   • Dia a dia: ${brl(r.gastosDia)}\n   • Parcelas: ${brl(r.parcelas)}\n⭐ Guardei p/ sonhos: ${brl(r.guardado)}\n✅ Sobrou: ${brl(r.sobra)}`;
+    let s = `📊 *Resumo de ${nomeMes(ym)}*${nome ? ' — ' + nome : ''}\n\n💰 Entrou: ${brl(r.entradasReais)}${r.previsto ? `\n   • Ainda vai cair: ${brl(r.previsto)}` : ''}\n🛒 Gastos: ${brl(r.gastoTotal)}\n   • Contas fixas: ${brl(r.fixas)}\n   • Dia a dia: ${brl(r.gastosDia)}\n   • Parcelas: ${brl(r.parcelas)}\n⭐ Guardei p/ sonhos: ${brl(r.guardado)}\n✅ Sobrou: ${brl(r.sobra)}`;
     if (r.maiorCategoria) s += `\n🔝 Maior gasto: ${r.maiorCategoria.nome} (${brl(r.maiorCategoria.valor)})`;
     if (r.orcamento > 0) s += `\n\n${barra(r.pctOrcamento)} ${Math.round(r.pctOrcamento * 100)}% do orçamento`;
     s += '\n\n' + mensagemHumor(r);
@@ -796,8 +1088,8 @@
     const atras = contasAtrasadas(estado, hoje);
     if (!prox.length && !atras.length) return '🎉 Nenhuma conta para os próximos 7 dias. Aproveite a tranquilidade!';
     let s = '🗓️ *Contas a pagar*\n';
-    if (atras.length) s += '\n⚠️ Atrasadas:\n' + atras.map((c) => `• ${c.nome} — ${brl(c.valor)} (dia ${c.dia})`).join('\n') + '\n';
-    if (prox.length) s += '\n' + prox.map((x) => `• ${x.emDias === 0 ? '*HOJE*' : x.emDias === 1 ? '*Amanhã*' : dataBR(x.data)} — ${x.conta.nome}: ${brl(x.conta.valor)}`).join('\n');
+    if (atras.length) s += '\n⚠️ Atrasadas:\n' + atras.map((c) => `• ${c.nome} — ${brl(valorConta(c, mesDe(iso(hoje))))} (dia ${c.dia})`).join('\n') + '\n';
+    if (prox.length) s += '\n' + prox.map((x) => `• ${x.emDias === 0 ? '*HOJE*' : x.emDias === 1 ? '*Amanhã*' : dataBR(x.data)} — ${x.conta.nome}: ${brl(x.valor)}`).join('\n');
     s += '\n\nQuando pagar, me diga: "paguei a conta de luz" ✅';
     return s;
   }
@@ -809,11 +1101,12 @@
   }
   function textoAjuda(estado) {
     const n = estado.perfil && estado.perfil.nome ? ', ' + estado.perfil.nome.split(' ')[0] : '';
-    return `Oi${n}! 💙 Eu sou o *Sonhaí*, seu parceiro das finanças.\n\nVocê pode me mandar texto ou áudio:\n🛒 "gastei 45,90 no mercado"\n💰 "recebi 3500 de salário"\n🛍️ "comprei uma TV de 2000 em 10x no cartão Nubank"\n💳 "gastei 10 na lanchonete no cartão de crédito Itaú"\n💳 "paguei a fatura do Itaú" • "paguei 500 da fatura do Bradesco"\n🗓️ "conta de luz vence dia 10, 150 reais"\n📌 "dentista quinta às 14h"\n⭐ "guardei 200 para a viagem" • "investi 500"\n💸 "retire 500 da reserva de emergência e coloque como renda"\n🔁 "transfere 300 da reserva para a viagem"\n🗑️ "exclui o gasto de 45,90"\n↩️ "desfazer"\n📊 "resumo" • "contas a pagar" • "agenda"`;
+    return `Oi${n}! 💙 Eu sou o *Sonhaí*, seu parceiro das finanças.\n\nVocê pode me mandar texto ou áudio:\n🛒 "gastei 45,90 no mercado"\n💰 "recebi 3500 de salário"\n🔁 "meu salário é 3500 todo dia 5"\n🛍️ "comprei uma TV de 2000 em 10x no cartão Nubank"\n💳 "gastei 10 na lanchonete no cartão de crédito Itaú"\n💳 "paguei a fatura do Itaú" • "paguei 500 da fatura do Bradesco"\n🗓️ "conta de luz vence dia 10, 150 reais"\n📌 "dentista quinta às 14h"\n⭐ "guardei 200 para a viagem" • "investi 500"\n🌈 "meta de 10000 para o carro"\n💸 "retire 500 da reserva de emergência e coloque como renda"\n🔁 "transfere 300 da reserva para a viagem"\n🗑️ "exclui o gasto de 45,90"\n↩️ "desfazer"\n📊 "resumo" • "contas a pagar" • "agenda"`;
   }
   function barra(p) { const n = Math.max(0, Math.min(10, Math.round(p * 10))); return '🟩'.repeat(Math.min(n, 7)) + (n > 7 ? '🟨'.repeat(Math.min(n - 7, 2)) : '') + (n > 9 ? '🟥' : '') + '⬜'.repeat(10 - n); }
   function mensagemHumor(r) {
     if (r.entradas === 0 && r.gastoTotal === 0) return '🌱 Mês novinho! Comece anotando o que entrou.';
+    if (r.entradas === 0) return '🌱 Ainda não sei a sua renda deste mês. Me diga: "meu salário é 3500 todo dia 5" ou "recebi 3500 de salário".';
     if (r.orcamento > 0 && r.pctOrcamento >= 1) return '💛 O orçamento estourou este mês. Respira: dá para ajustar! Que tal rever os gastos do dia a dia nos próximos dias?';
     if (r.orcamento > 0 && r.pctOrcamento >= 0.85) return '🟡 Atenção: você está chegando no limite do mês. Segura firme que dá!';
     if (r.sobra > 0 && r.guardado > 0) return '🏆 Parabéns! Você está seguindo o planejado e ainda guardou para os seus sonhos. Orgulho!';
@@ -873,7 +1166,7 @@
   }
 
   // ---------------------------------------------------------------- mesclagem
-  const COLECOES = ['lancamentos', 'contas', 'parcelados', 'cartoes', 'anuais', 'sonhos', 'dividas', 'agenda', 'categorias'];
+  const COLECOES = ['lancamentos', 'contas', 'rendas', 'parcelados', 'cartoes', 'anuais', 'sonhos', 'dividas', 'agenda', 'categorias'];
   /** Junta dois estados (celular e servidor) sem perder o que veio do WhatsApp. */
   function mesclar(a, b) {
     if (!a) return b; if (!b) return a;
@@ -896,8 +1189,8 @@
 
   return {
     CATEGORIAS, TIPOS_ENTRADA, INCENTIVOS, MESES, sem, uid, iso, pad, brl, dataBR, mesDe, nomeMes, mesCurto, somaMes, difMeses, diasNoMes, agora,
-    VERSICULOS, versiculoDoDia, LIMITE_VALOR, LIMITE_TEXTO, sanearEstado, BANCOS, detectarCartao, garantirCartao, mesFatura, fatura, pagarFatura, faturasAVencer, rotuloFatura,
-    conversar, interpretar, aplicar, remover, acharSonho, retirarDoSonho, estadoVazio, resumoMes, mesesComDados, parcelaNoMes, contaNoMes, contasAVencer, contasAtrasadas, totalSonho,
+    VERSICULOS, versiculoDoDia, LIMITE_VALOR, LIMITE_TEXTO, sanearEstado, BANCOS, detectarCartao, garantirCartao, mesFatura, diaFechamento, vencFatura, fatura, pagarFatura, faturasAVencer, faturaDaVez, rotuloFatura,
+    conversar, interpretar, aplicar, remover, acharExclusao, descreverAlvo, valorConta, definirValorConta, encerrarConta, garantirRendas, acharSonho, retirarDoSonho, estadoVazio, resumoMes, mesesComDados, parcelaNoMes, contaNoMes, contasAVencer, contasAtrasadas, totalSonho,
     textoResumo, textoContas, textoAgenda, textoAjuda, mensagemHumor, barra, mesclar, adivinharCategoria, extrairValor, extrairData, extrairHora
   };
 });

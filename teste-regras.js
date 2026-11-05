@@ -1,0 +1,117 @@
+// Sonhaí: teste das regras (frases, desfazer, cartão, histórico e renda fixa)
+// Como rodar: node teste-regras.js
+const fs = require('fs'), path = require('path');
+const arq = fs.existsSync(path.join(__dirname, 'core.js')) ? path.join(__dirname, 'core.js') : path.join(__dirname, 'public', 'core.js');
+const CC = require(arq);
+let ok = 0, falhas = 0;
+const confere = (nome, real, esperado) => {
+  const a = JSON.stringify(real), b = JSON.stringify(esperado);
+  if (a === b) ok++; else { falhas++; console.log('❌ ' + nome + '\n   veio:     ' + a + '\n   esperado: ' + b); }
+};
+const quarta = new Date(2026, 10, 4, 20, 0); // quarta-feira, 04/11/2026
+const novo = () => { const e = CC.estadoVazio(); e.perfil.nome = 'Teste'; return e; };
+const le = (f, hoje) => CC.interpretar(f, { hoje: hoje || quarta });
+const fala = (e, f, hoje) => CC.conversar(e, f, { hoje: hoje || quarta, origem: 'whatsapp' });
+
+// ---------------------------------------------------------------- valores
+for (const [f, v] of [
+  ['gastei 2 mil no conserto do carro', 2000], ['gastei 1 mil de aluguel', 1000], ['gastei 3 mil reais na viagem', 3000], ['paguei 1,5 mil no dentista', 1500],
+  ['gastei 2 mil e 500 na reforma', 2500], ['gastei mil e quinhentos no conserto', 1500], ['gastei dois mil reais', 2000], ['gastei dois mil e quinhentos no conserto', 2500],
+  ['comprei 2 camisas por 100', 100], ['almoço para 3 pessoas 120', 120], ['abasteci 40 litros 230', 230], ['comprei 3 pizzas 90', 90], ['gastei 200 em 2 pneus', 200],
+  ['99 pop 18', 18], ['gastei 50 no mercado com 2 filhos', 50], ['comprei uma TV de 2000', 2000], ['2 kg de carne 80', 80],
+  ['gastei cinquenta e dois e noventa no mercado', 52.9], ['cinco e cinquenta na padaria', 5.5], ['gastei vinte e cinco reais e cinquenta centavos', 25.5], ['cento e vinte reais de luz', 120],
+  ['cinquenta e dois reais e noventa no mercado', 52.9], ['gastei um real e cinquenta na bala', 1.5], ['gastei cem reais', 100], ['duzentos e cinquenta e cinco no mercado', 255],
+  ['R$ 1.234,56 no mercado', 1234.56], ['gastei 1.500,00 no aluguel', 1500], ['paguei 99.90 na farmácia', 99.9], ['gastei 45,90 no mercado', 45.9], ['ifood 22', 22], ['15 reais de pão', 15],
+  ['compras 350', 350], ['roupas 200', 200], ['gastei com roupas 200', 200], ['gás 130', 130], ['frutas 20', 20], ['pizzas 90', 90], ['verduras 30', 30],
+  ['gastei 120 dia 28', 120], ['gastei 60 dia 30 de outubro', 60], ['gastei 500 mês passado', 500], ['gastei 50 no cartão c6', 50]
+]) { const a = le(f); confere(f, [a.tipo, a.valor], ['gasto', v]); }
+confere('comprei 3 pizzas não tem preço', le('comprei 3 pizzas').tipo, 'desconhecido');
+confere('5 kg de arroz não tem preço', le('comprei 5 kg de arroz').tipo, 'desconhecido');
+
+// ---------------------------------------------------------------- categorias
+confere('compras vai para Mercado', le('compras 350').cat, 'Mercado');
+confere('gás vai para Contas da Casa', le('gás 130').cat, 'Contas da Casa');
+confere('caixa eletrônico não é Eletrônicos', le('tirei 100 no caixa eletrônico').cat, 'Outros');
+confere('mercado livre é compra online', le('gastei 80 no mercado livre').cat, 'Compras Online');
+
+// ---------------------------------------------------------------- datas
+confere('gasto na sexta olha para trás', le('gastei 50 na sexta').data, '2026-10-30');
+confere('gasto no sábado olha para trás', le('gastei 80 no sábado').data, '2026-10-31');
+confere('gasto na segunda olha para trás', le('gastei 40 na segunda').data, '2026-11-02');
+confere('gasto dia 28 é do mês passado', le('gastei 120 dia 28').data, '2026-10-28');
+confere('gasto dia 3 é deste mês', le('gastei 70 dia 3').data, '2026-11-03');
+confere('gasto dia 30 de outubro', le('gastei 60 dia 30 de outubro').data, '2026-10-30');
+confere('gasto em 25/12 é do ano passado', le('gastei 90 em 25/12').data, '2025-12-25');
+confere('dentista dia 3 vai para o mês seguinte', le('dentista dia 3 às 15h').data, '2026-12-03');
+confere('compromisso segunda olha para a frente', le('reunião segunda às 9h').data, '2026-11-09');
+confere('compromisso dia 31 em novembro não estoura', le('dentista dia 31 às 15h').data, '2026-11-30');
+confere('segunda parcela não é dia da semana', le('paguei a segunda parcela do carro 300').data, '2026-11-04');
+confere('gastei ontem', le('gastei 30 ontem').data, '2026-11-03');
+confere('dentista amanhã', le('dentista amanhã às 15h').data, '2026-11-05');
+confere('compromisso em data passada avisa', /já passou/.test(fala(novo(), 'dentista 02/11 às 15h').msg), true);
+
+// ---------------------------------------------------------------- parcelas
+for (const [f, n, v] of [['comprei uma geladeira em 3x de 1.200', 3, 1200], ['comprei tv 12 parcelas de 199,90', 12, 199.9], ['tv de 3.000 em 10x', 10, 300], ['parcelei 600 em 6', 6, 100], ['comprei uma TV de 2000 em 10x no cartão Nubank', 10, 200], ['comprei uma tv de 2 mil em 10x', 10, 200]]) { const a = le(f); confere(f, [a.tipo, a.n, a.valorParcela], ['parcelado', n, v]); }
+
+// ---------------------------------------------------------------- intenção
+for (const f of ['gastei 50 em Tiradentes', 'comprei removedor de esmalte 12', 'gastei 30 na cancela do estacionamento', 'conta do restaurante 120', 'a conta do bar deu 80', 'dividi a conta do almoço 45', 'reservei o hotel 500', 'tirei 100 no caixa eletrônico']) confere(f, le(f).tipo, 'gasto');
+for (const f of ['vale a pena comprar uma tv de 2000', 'quero comprar um carro de 30000', 'posso gastar 100 no mercado?', 'vou pagar 100 de luz amanhã', 'quero guardar 500 por mês para viagem']) confere(f, le(f).tipo, 'plano');
+confere('meta do carro', [le('meta de 10000 para o carro').tipo, le('meta de 10000 para o carro').valor, le('meta de 10000 para o carro').nome], ['meta_sonho', 10000, 'Carro']);
+confere('quero juntar', le('quero juntar 8000 para a viagem').tipo, 'meta_sonho');
+confere('cancelei a netflix não lança nada', le('cancelei a netflix 40').tipo, 'desconhecido');
+for (const f of ['exclui o gasto de 45,90', 'apaga o gasto do restaurante', 'pode excluir o gasto de 50', 'remove a conta de luz', 'cancela o compromisso do dentista', 'tira o gasto de 45']) confere(f, le(f).tipo, 'excluir');
+for (const [f, t] of [['conta de luz vence dia 10, 150 reais', 'conta'], ['conta de água vence dia 17, 90 reais', 'conta'], ['boleto da escola 500 dia 10', 'conta'], ['conta de internet todo dia 15 110 reais', 'conta'], ['mensalidade da escola 900 dia 8', 'conta'], ['me lembra de pagar o boleto amanhã', 'compromisso'], ['dentista quinta às 14h', 'compromisso'], ['guardei 200 para a viagem', 'sonho'], ['investi 500', 'sonho'], ['reservei 500 para a viagem', 'sonho'], ['recebi 5000 de salário', 'entrada'], ['ganhei 100 de presente', 'entrada'], ['recebi 800 de vale alimentação', 'entrada'], ['paguei a fatura do Itaú', 'pagar_fatura'], ['a fatura do Itaú vence dia 10 e fecha dia 3', 'config_cartao'], ['resumo', 'resumo'], ['contas a pagar', 'contas_pendentes'], ['agenda', 'agenda_hoje'], ['desfazer', 'desfazer'], ['quanto sobrou', 'resumo'], ['quanto posso gastar', 'resumo'], ['oi', 'ajuda']]) confere(f, le(f).tipo, t);
+confere('vale alimentação não é adiantamento', le('recebi 800 de vale alimentação').cat, 'Outra renda');
+confere('frases do guia', ['retire 500 da reserva de emergência e coloque como renda', 'transfere 300 da reserva para a viagem'].map((f) => CC.interpretar(f, { hoje: quarta, sonhos: [{ id: '1', nome: 'Reserva de emergência' }, { id: '2', nome: 'Viagem' }] }).tipo), ['resgate', 'resgate']);
+
+// ---------------------------------------------------------------- exclusão com confirmação
+{ const e = novo(); fala(e, 'gastei 50 no mercado'); const r = fala(e, 'gastei 50 em Tiradentes'); confere('Tiradentes não apaga nada', [e.lancamentos.length, r.ok], [2, true]); }
+{ const e = novo(); fala(e, 'gastei 50 no mercado'); const r = fala(e, 'exclui o gasto de 50'); confere('pede confirmação', [e.lancamentos.length, /sim/.test(r.msg)], [1, true]); const r2 = fala(e, 'sim'); confere('exclui depois do sim', [e.lancamentos.length, r2.ok, !!r2.podeDesfazer], [0, true, true]); fala(e, 'desfazer'); confere('desfazer traz de volta', e.lancamentos.map((l) => l.valor), [50]); }
+{ const e = novo(); fala(e, 'gastei 50 no mercado'); fala(e, 'exclui o gasto de 50'); const r = fala(e, 'não'); confere('não mantém', [e.lancamentos.length, r.msg], [1, 'Tudo bem, não excluí nada. 🙂']); }
+{ const e = novo(); fala(e, 'gastei 50 no mercado'); fala(e, 'exclui o gasto de 50'); fala(e, 'gastei 30 na padaria'); confere('outra frase cancela a pergunta e segue', [e.lancamentos.length, e.pendente], [2, undefined]); }
+
+// ---------------------------------------------------------------- desfazer
+{ const e = novo(); fala(e, 'gastei 50 no mercado'); fala(e, 'recebi 3000 de salário'); fala(e, 'guardei 200 para a viagem'); const r = fala(e, 'desfazer'); confere('desfazer sonho', [e.lancamentos.length, e.sonhos.length, /guardados/.test(r.msg)], [2, 1, true]); }
+{ const e = novo(); fala(e, 'conta de luz vence dia 10, 150 reais'); fala(e, 'gastei 30 na padaria'); const r0 = fala(e, 'paguei 160 de luz'); confere('paguei oferece desfazer', !!r0.podeDesfazer, true); const r = fala(e, 'desfazer'); confere('desfazer pagamento mantém a conta', [e.contas.length, CC.valorConta(e.contas[0], '2026-11'), !!(e.contas[0].pagos || {})['2026-11'], e.lancamentos.length, /pagamento/.test(r.msg)], [1, 150, false, 1, true]); }
+{ const e = novo(); fala(e, 'conta de luz vence dia 10, 150 reais'); fala(e, 'paguei a conta de luz'); fala(e, 'desfazer'); confere('desfazer "paguei a conta"', [e.contas.length, !!(e.contas[0].pagos || {})['2026-11']], [1, false]); }
+{ const e = novo(); fala(e, 'gastei 50 no mercado no cartão de crédito Itaú'); fala(e, 'desfazer'); confere('desfazer tira gasto e cartão novo', [e.lancamentos.length, e.cartoes.length], [0, 0]); }
+{ const e = novo(); fala(e, 'gastei 50 no mercado no cartão de crédito Itaú'); fala(e, 'paguei a fatura do Itaú'); const y = Object.keys(e.cartoes[0].faturas); fala(e, 'desfazer'); confere('desfazer pagamento de fatura', [y.length, Object.keys(e.cartoes[0].faturas).length, e.lancamentos.length], [1, 0, 1]); }
+{ const e = novo(); fala(e, 'guardei 500 na reserva'); fala(e, 'retire 200 da reserva de emergência e coloque como renda'); const s = e.sonhos[0]; confere('retirada', [CC.totalSonho(s), e.lancamentos.length], [300, 1]); fala(e, 'desfazer'); confere('desfazer retirada', [CC.totalSonho(e.sonhos[0]), e.lancamentos.length], [500, 0]); }
+{ const e = novo(); fala(e, 'gastei 10 na padaria'); fala(e, 'gastei 20 na padaria'); fala(e, 'desfazer'); fala(e, 'desfazer'); confere('desfazer duas vezes', e.lancamentos.length, 0); confere('sem mais nada', fala(e, 'desfazer').ok, false); }
+{ const e = novo(); fala(e, 'comprei uma TV de 2000 em 10x no cartão Nubank'); fala(e, 'desfazer'); confere('desfazer parcelado', [e.parcelados.length, e.cartoes.length], [0, 0]); }
+{ const e = novo(); fala(e, 'dentista amanhã às 15h'); fala(e, 'desfazer'); confere('desfazer compromisso', e.agenda.length, 0); }
+{ const e = novo(); fala(e, 'meu salário é 5000 todo dia 2'); fala(e, 'desfazer'); confere('desfazer renda fixa', [e.rendas.length, e.lancamentos.length], [0, 0]); }
+
+// ---------------------------------------------------------------- cartão
+const dia20 = new Date(2026, 10, 20, 20, 0);
+{ const e = novo(); const r = fala(e, 'gastei 100 na lanchonete no cartão de crédito Itaú', dia20); const c = e.cartoes[0]; const ym = CC.mesFatura(c, '2026-11-20'); const f = CC.fatura(e, c.id, ym, dia20); confere('cartão sem fechamento', [ym, f.venc, f.situacao, CC.faturasAVencer(e, dia20, 30).length], ['2026-12', '2026-12-10', 'aberta', 1]); confere('resposta diz o vencimento', /vence em 10\/12/.test(r.msg), true); }
+{ const e = novo(); fala(e, 'gastei 100 na lanchonete no cartão de crédito Itaú', dia20); fala(e, 'a fatura do Itaú vence dia 5 e fecha dia 28', dia20); const c = e.cartoes[0]; const f = CC.fatura(e, c.id, CC.mesFatura(c, '2026-11-20'), dia20); confere('fecha 28, vence 5', [f.ym, f.venc, f.situacao], ['2026-11', '2026-12-05', 'aberta']); confere('lembra um dia antes', CC.faturasAVencer(e, new Date(2026, 11, 4, 8, 0), 1).map((x) => x.emDias), [1]); const dez5 = new Date(2026, 11, 5, 9, 0); confere('lembra no dia', CC.faturasAVencer(e, dez5, 1).map((x) => x.emDias), [0]); fala(e, 'paguei a fatura do Itaú', dez5); confere('paga a fatura certa', Object.keys(e.cartoes[0].faturas), ['2026-11']); confere('depois de paga', CC.fatura(e, c.id, '2026-11', dez5).situacao, 'paga'); }
+{ const e = novo(); const h = new Date(2026, 10, 2, 9, 0); fala(e, 'gastei 100 na lanchonete no cartão de crédito Itaú', h); fala(e, 'a fatura do Itaú vence dia 10 e fecha dia 3', h); const c = e.cartoes[0]; confere('fecha 3, vence 10, compra dia 2', [CC.mesFatura(c, '2026-11-02'), CC.vencFatura(c, '2026-11')], ['2026-11', '2026-11-10']); confere('compra depois do fechamento', [CC.mesFatura(c, '2026-11-05'), CC.vencFatura(c, '2026-12')], ['2026-12', '2026-12-10']); }
+{ const c = { diaVenc: 5 }; confere('fechamento padrão com vencimento dia 5', [CC.diaFechamento(c), CC.vencFatura(c, '2026-12')], [28, '2027-01-05']); confere('vencimento em fevereiro', CC.vencFatura({ diaVenc: 31, fechamento: 20 }, '2027-02'), '2027-02-28'); }
+
+// ---------------------------------------------------------------- histórico
+{ const e = novo(); for (const m of ['09', '10']) e.lancamentos.push({ id: 'a' + m, tipo: 'entrada', data: `2026-${m}-05`, desc: 'Sal', cat: 'Salário', valor: 5000, upd: 1 });
+  fala(e, 'conta de aluguel vence dia 5, 2000 reais'); confere('conta nova não mexe no passado', [CC.resumoMes(e, '2026-09').gastoTotal, CC.resumoMes(e, '2026-10').gastoTotal, CC.resumoMes(e, '2026-11').gastoTotal, CC.resumoMes(e, '2026-11').saldoAcum], [0, 0, 2000, 8000]);
+  const d1 = new Date(2026, 11, 3, 9, 0); fala(e, 'paguei 2500 de aluguel', d1); confere('valor novo vale daqui para a frente', [CC.resumoMes(e, '2026-11').gastoTotal, CC.resumoMes(e, '2026-12').gastoTotal, CC.resumoMes(e, '2027-01').gastoTotal], [2000, 2500, 2500]); }
+{ const e = novo(); e.contas.push({ id: 'x', nome: 'Luz', cat: 'Contas da Casa', valor: 150, dia: 10, recorrente: true, pagos: {}, upd: 1 }); fala(e, 'paguei 200 de luz'); confere('conta antiga guarda o valor antigo', [CC.valorConta(e.contas[0], '2026-09'), CC.valorConta(e.contas[0], '2026-11'), e.contas[0].valor], [150, 200, 200]); }
+{ const e = novo(); e.contas.push({ id: 'x', nome: 'Luz', cat: 'Contas da Casa', valor: 150, dia: 10, recorrente: true, pagos: {}, upd: 1 }); fala(e, 'exclui a conta de luz'); fala(e, 'sim'); confere('excluir conta preserva meses anteriores', [e.contas.length, CC.resumoMes(e, '2026-10').fixas, CC.resumoMes(e, '2026-11').fixas, CC.resumoMes(e, '2026-12').fixas], [1, 150, 0, 0]); fala(e, 'desfazer'); confere('desfazer reativa a conta', CC.resumoMes(e, '2026-12').fixas, 150); }
+{ const e = novo(); fala(e, 'conta de luz vence dia 10, 150 reais'); fala(e, 'conta de luz vence dia 12, 170 reais'); confere('atualiza sem duplicar', [e.contas.length, e.contas[0].dia, CC.valorConta(e.contas[0], '2026-11')], [1, 12, 170]); }
+
+// ---------------------------------------------------------------- renda fixa
+const dia1 = new Date(2026, 11, 1, 9, 0);
+{ const e = novo(); fala(e, 'conta de aluguel vence dia 20, 1500 reais', dia1); fala(e, 'conta de luz vence dia 25, 200 reais', dia1); const r = CC.resumoMes(e, '2026-12'); confere('sem renda, a mensagem pede a renda', /renda/.test(CC.mensagemHumor(r)), true); }
+{ const e = novo(); const a = le('meu salário é 5000 todo dia 5'); confere('entende renda fixa', [a.tipo, a.nome, a.valor, a.dia], ['renda_fixa', 'Salário', 5000, 5]); confere('recebo por mês', [le('recebo 3000 por mês').tipo, le('recebo 3000 por mês').dia], ['renda_fixa', 5]); confere('aposentadoria', le('minha aposentadoria é 2800 todo dia 25').cat, 'Aposentadoria');
+  fala(e, 'meu salário é 5000 todo dia 5', dia1); fala(e, 'conta de aluguel vence dia 20, 1700 reais', dia1); const r = CC.resumoMes(e, '2026-12'); confere('dia 1º com renda fixa', [r.entradas, r.entradasReais, r.previsto, r.sobra], [5000, 0, 5000, 3300]);
+  const d5 = new Date(2026, 11, 5, 9, 0); confere('lança no dia', CC.garantirRendas(e, d5), true); const r2 = CC.resumoMes(e, '2026-12'); confere('depois de cair', [r2.entradas, r2.entradasReais, r2.previsto, e.lancamentos.length], [5000, 5000, 0, 1]); confere('não duplica', CC.garantirRendas(e, d5), false);
+  confere('mês seguinte fica previsto', CC.resumoMes(e, '2027-01').previsto, 5000); CC.garantirRendas(e, new Date(2027, 2, 10)); confere('recupera meses sem abrir o app', e.lancamentos.filter((l) => l.tipo === 'entrada').length, 4);
+  fala(e, 'recebi 5300 de salário', new Date(2027, 2, 10)); confere('"recebi" ajusta em vez de duplicar', [e.lancamentos.filter((l) => l.data.startsWith('2027-03')).length, e.lancamentos.find((l) => l.data.startsWith('2027-03')).valor], [1, 5300]); }
+{ const e = novo(); fala(e, 'recebi 5000 de salário', new Date(2026, 11, 6)); fala(e, 'meu salário é 5000 todo dia 5', new Date(2026, 11, 6)); confere('já lançado à mão não duplica', [e.lancamentos.length, CC.resumoMes(e, '2026-12').entradas], [1, 5000]); }
+{ const e = novo(); fala(e, 'meu salário é 5000 todo dia 5', dia1); fala(e, 'meu salário é 5500 todo dia 6', dia1); confere('atualiza a renda fixa', [e.rendas.length, e.rendas[0].dia, CC.valorConta(e.rendas[0], '2026-12')], [1, 6, 5500]); }
+{ const e = novo(); fala(e, 'meu salário é 5000 todo dia 5', new Date(2026, 11, 6)); confere('lançou', e.lancamentos.length, 1); CC.remover(e, 'lancamentos', e.lancamentos[0].id); CC.garantirRendas(e, new Date(2026, 11, 7)); confere('excluída não volta', [e.lancamentos.length, CC.resumoMes(e, '2026-12').previsto], [0, 0]); }
+{ const a = novo(); fala(a, 'meu salário é 5000 todo dia 5', dia1); const b = JSON.parse(JSON.stringify(a)); const d5 = new Date(2026, 11, 5, 9, 0); CC.garantirRendas(a, d5); CC.garantirRendas(b, d5); const m = CC.mesclar(a, b); confere('celular e servidor não duplicam', m.lancamentos.length, 1); }
+
+// ---------------------------------------------------------------- frases do guia continuam funcionando
+{ const e = novo(); for (const f of ['gastei 45,90 no mercado', 'gastei 10 na lanchonete no cartão de crédito Itaú', 'comprei uma TV de 2000 em 10x no cartão Nubank', 'a fatura do Itaú vence dia 10 e fecha dia 3', 'quanto está a fatura do Itaú', 'paguei a fatura do Itaú', 'paguei 130 de luz', 'recebi 5000 de salário', 'conta de água vence dia 17, 90 reais', 'dentista quinta às 14h', 'guardei 200 para a viagem', 'transfere 100 da viagem para a reserva', 'exclui o gasto de 45,90', 'sim', 'desfazer', 'resumo', 'contas a pagar', 'agenda']) { const r = fala(e, f); if (!r.ok && !r.pergunta) { falhas++; console.log('❌ guia: ' + f + ' → ' + r.msg); } else ok++; } }
+
+console.log(`\n${falhas ? '⚠️' : '✅'} ${ok} testes passaram, ${falhas} falharam.`);
+process.exit(falhas ? 1 : 0);

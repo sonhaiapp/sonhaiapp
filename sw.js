@@ -1,5 +1,5 @@
 // Sonhaí — funciona offline (o app abre mesmo sem internet)
-const CACHE = 'sonhai-v2';
+const CACHE = 'sonhai-v3';
 const ARQS = ['/', '/index.html', '/core.js', '/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/icon-512.png'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ARQS)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim())); });

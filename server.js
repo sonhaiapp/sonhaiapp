@@ -14,8 +14,9 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-// Funciona com os arquivos na pasta public/ ou todos soltos na mesma pasta (upload pelo GitHub)
-const PUB = fs.existsSync(path.join(__dirname, 'public', 'index.html')) ? path.join(__dirname, 'public') : __dirname;
+// Funciona com os arquivos todos soltos na mesma pasta (upload pelo GitHub) ou na pasta public/.
+// Os soltos têm prioridade: são sempre os da atualização mais recente.
+const PUB = fs.existsSync(path.join(__dirname, 'index.html')) ? __dirname : path.join(__dirname, 'public');
 const CC = require(path.join(PUB, 'core.js'));
 // só estes arquivos podem ser abertos pelo navegador
 const PUBLICOS = new Set(['index.html', 'core.js', 'sw.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png', 'privacidade.html', 'termos.html']);
@@ -360,6 +361,7 @@ async function processar(u, texto, origemAudio, canal) {
   if (expirado(u)) return env(msgExpirado(u));
   u.estado.chat.push({ de: 'me', txt: (origemAudio ? '🎤 ' : '') + texto, em: Date.now() });
   const hoje = CC.agora(CFG.tz);
+  if (CC.garantirRendas(u.estado, hoje)) u.rev++;
   const t = CC.sem(texto).trim();
   if (/^(esqueci (a |minha )?senha|recuperar senha|trocar senha|nova senha)$/.test(t)) {
     const cod = crypto.randomBytes(16).toString('base64url');
@@ -390,7 +392,7 @@ async function processar(u, texto, origemAudio, canal) {
   if (r.ok && r.colecao) u.rev++;
   let resp = r.msg;
   if (origemAudio) resp = `🎤 Entendi: "${texto}"\n\n` + resp;
-  if (r.ok && r.item && ['gasto', 'entrada', 'parcelado', 'compromisso', 'conta', 'resgate'].includes(acao.tipo)) resp += '\n\nErrou? Responda *desfazer*.';
+  if (r.podeDesfazer) resp += '\n\nErrou? Responda *desfazer*.';
   await env(resp);
 }
 
@@ -422,11 +424,11 @@ function textoManha(u, hoje) {
   const hojeIso = CC.iso(hoje);
   const ag = (e.agenda || []).filter((a) => a.data === hojeIso && !a.feito && a.lembrar !== false).sort((a, b) => (a.hora || '99').localeCompare(b.hora || '99'));
   const linhas = [];
-  venc.filter((x) => x.emDias === 0).forEach((x) => linhas.push(`🔴 *HOJE* vence: ${x.conta.nome} — ${CC.brl(x.conta.valor)}`));
-  venc.filter((x) => x.emDias === 1).forEach((x) => linhas.push(`🟡 *Amanhã* vence: ${x.conta.nome} — ${CC.brl(x.conta.valor)}`));
+  venc.filter((x) => x.emDias === 0).forEach((x) => linhas.push(`🔴 *HOJE* vence: ${x.conta.nome} — ${CC.brl(x.valor)}`));
+  venc.filter((x) => x.emDias === 1).forEach((x) => linhas.push(`🟡 *Amanhã* vence: ${x.conta.nome} — ${CC.brl(x.valor)}`));
   const fv = CC.faturasAVencer(e, hoje, 1);
   fv.forEach((x) => linhas.push(`${x.emDias ? '🟡 *Amanhã*' : '🔴 *HOJE*'} vence a fatura do cartão *${x.fatura.cartao.nome}* — ${CC.brl(x.fatura.falta)}${x.fatura.situacao === 'parcial' ? ' (restante)' : ''}`));
-  if (atras.length && hoje.getDay() === 1) atras.forEach((c) => linhas.push(`⚠️ Em atraso: ${c.nome} (dia ${c.dia}) — ${CC.brl(c.valor)}`));
+  if (atras.length && hoje.getDay() === 1) atras.forEach((c) => linhas.push(`⚠️ Em atraso: ${c.nome} (dia ${c.dia}) — ${CC.brl(CC.valorConta(c, hojeIso.slice(0, 7)))}`));
   if (hoje.getDate() === 1) (e.anuais || []).filter((a) => +a.mes === hoje.getMonth() + 1).forEach((a) => linhas.push(`📌 Este mês vence: ${a.nome} — ${CC.brl(a.valor)}`));
   if (ag.length) { linhas.push(''); linhas.push('📌 *Compromissos de hoje:*'); ag.forEach((a) => linhas.push(`• ${a.hora ? a.hora + ' — ' : ''}${a.titulo}`)); }
   // segunda-feira: incentivo dos sonhos
@@ -460,6 +462,7 @@ async function ciclo() {
     const e = u.estado; u.enviados = u.enviados || {};
     const marca = async (chave, fn) => { if (u.enviados[chave]) return; u.enviados[chave] = Date.now(); salvarDB(); const t = fn(); if (t) await enviar(u, t); };
     try {
+      if (CC.garantirRendas(e, agora)) { u.rev++; salvarDB(); }
       if (hm >= (e.perfil.lembreteHora || '08:00')) await marca('manha:' + hojeIso, () => textoManha(u, agora));
       for (const a of e.agenda || []) {
         if (!a.hora || a.feito || a.lembrar === false || a.data !== hojeIso) continue;
@@ -728,8 +731,12 @@ const servidor = http.createServer(async (req, res) => {
       if (req.method === 'GET') return json(res, 200, { estado: u.estado, rev: u.rev, fone: u.fone });
       if (req.method === 'PUT') {
         const { estado } = JSON.parse((await lerCorpo(req, 5 * 1024 * 1024)).toString());
-        const chat = u.estado.chat;
-        u.estado = CC.sanearEstado(CC.mesclar(estado, u.estado)); u.estado.chat = chat; delete u.estado.demo; u.rev++; salvarDB();
+        // conversa, pergunta em aberto e "desfazer" do WhatsApp/Telegram pertencem ao servidor
+        const { chat, pendente, desfazer } = u.estado;
+        u.estado = CC.sanearEstado(CC.mesclar(estado, u.estado)); u.estado.chat = chat; delete u.estado.demo;
+        if (pendente) u.estado.pendente = pendente; else delete u.estado.pendente;
+        if (desfazer) u.estado.desfazer = desfazer; else delete u.estado.desfazer;
+        u.rev++; salvarDB();
         return json(res, 200, { estado: u.estado, rev: u.rev });
       }
     }
