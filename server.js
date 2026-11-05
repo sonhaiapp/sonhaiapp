@@ -38,8 +38,20 @@ const CFG = {
   waVerify: process.env.WHATSAPP_VERIFY_TOKEN || 'sonhai',
   waSecret: process.env.WHATSAPP_APP_SECRET || '',
   waVersao: process.env.WHATSAPP_API_VERSION || 'v21.0',
-  template: process.env.WHATSAPP_TEMPLATE || '', // ex.: lembrete_sonhai
+  waBase: process.env.WHATSAPP_API || 'https://graph.facebook.com',
+  // modelos aprovados na Meta para avisar fora da janela de 24h (veja o GUIA, passo 5)
+  modelos: { dia: process.env.WHATSAPP_TEMPLATE_DIA || 'lembrete_dia', compromisso: process.env.WHATSAPP_TEMPLATE_COMPROMISSO || 'lembrete_compromisso', mes: process.env.WHATSAPP_TEMPLATE_MES || 'resumo_mes' },
   templateLang: process.env.WHATSAPP_TEMPLATE_LANG || 'pt_BR',
+  // e-mail (Brevo, grátis): o Render grátis bloqueia SMTP, então o envio é pela API
+  brevo: process.env.BREVO_API_KEY || '',
+  brevoBase: process.env.BREVO_API || 'https://api.brevo.com',
+  emailDe: process.env.EMAIL_REMETENTE || '',
+  // dados que aparecem na Política de Privacidade e nos Termos
+  empresa: process.env.EMPRESA_NOME || '',
+  empresaDoc: process.env.EMPRESA_DOC || '',
+  contato: process.env.CONTATO_EMAIL || '',
+  // dias que os dados ficam guardados depois que o acesso vence
+  retencao: Math.max(30, +process.env.DIAS_RETENCAO || 90),
   openai: process.env.OPENAI_API_KEY || '',
   groq: process.env.GROQ_API_KEY || '',
   modeloAudio: process.env.TRANSCRIBE_MODEL || '',
@@ -49,6 +61,8 @@ const CFG = {
   dados: process.env.DATA_DIR || path.join(__dirname, 'data')
 };
 const DEMO = !CFG.waToken || !CFG.waPhoneId;
+const EMAIL_LIGADO = !!(CFG.brevo && CFG.emailDe);
+const VERSAO_TERMOS = '2026-11-04'; // mude a data quando alterar a Política ou os Termos: todos aceitam de novo
 const PRODUCAO = !!process.env.RENDER || /^https:/.test(process.env.PUBLIC_URL || '');
 const LOG_MENSAGENS = !PRODUCAO || process.env.LOG_MENSAGENS === '1'; // em produção não registra mensagens (LGPD)
 const log = (...a) => console.log(new Date().toISOString(), ...a);
@@ -136,6 +150,8 @@ for (const [t, v] of Object.entries(DB.tokens)) if (typeof v === 'string') DB.to
 for (const nome of ['tokens', 'resets', 'convites', 'tgcodigos']) { const o = DB[nome] || {}; const novo = {}; for (const [kk, v] of Object.entries(o)) novo[/^[0-9a-f]{64}$/.test(kk) ? kk : H(kk)] = v; DB[nome] = novo; }
 DB.auditoria = DB.auditoria || [];
 DB.resets = DB.resets || {};
+// quem se cadastrou com o WhatsApp desligado nunca confirmou o número: não pode receber lembrete nele
+for (const u of Object.values(DB.usuarios)) if (u && u.criadoPor === 'cadastro' && u.verificado !== false && !u.ultimaMsg) { u.verificado = false; u.codigo = codigoVerif(); }
 }
 
 const SESSAO_DIAS = 180;
@@ -165,7 +181,9 @@ const expirado = (u) => !!u && !ehAdmin(u) && !!u.validade && hojeSP() > u.valid
 const diasRestantes = (u) => u && u.validade ? Math.round((new Date(u.validade + 'T12:00') - new Date(hojeSP() + 'T12:00')) / 864e5) : null;
 const suporte = () => { const k = [...ADMINS][0]; return normFone(process.env.SUPORTE_WHATSAPP || '') || (k && DB.usuarios[k] ? DB.usuarios[k].fone : normFone(String(process.env.ADMIN_FONES || '').split(/[,;\s]+/)[0])) || ''; };
 const fmtFone = (f) => { const d = String(f || '').replace(/\D/g, '').replace(/^55/, ''); return d.length >= 10 ? `(${d.slice(0, 2)}) ${d.slice(2, d.length - 4)}-${d.slice(-4)}` : f; };
-const msgExpirado = (u) => `⏳ Seu acesso ao Sonhaí venceu em ${CC.dataBR(u.validade)}. Para renovar, fale com o suporte${suporte() ? ' no WhatsApp ' + fmtFone(suporte()) : ''}. Seus dados continuam guardados. 💙`;
+/** Quantos dias faltam para apagar os dados de uma conta vencida (null: não está vencida). */
+const diasParaApagar = (u) => { if (!expirado(u)) return null; return CFG.retencao + (diasRestantes(u) || 0); };
+const msgExpirado = (u) => `⏳ Seu acesso ao Sonhaí venceu em ${CC.dataBR(u.validade)}. Para renovar, fale com o suporte${suporte() ? ' no WhatsApp ' + fmtFone(suporte()) : ''}. Seus dados ficam guardados por mais ${Math.max(0, diasParaApagar(u))} dias. Você também pode entrar no app para baixar ou excluir seus dados. 💙`;
 const emailValido = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(e || '').trim());
 const porEmail = (e) => { e = String(e || '').trim().toLowerCase(); return e ? Object.values(DB.usuarios).find((u) => u && (u.email || '').toLowerCase() === e) : null; };
 function senhaInicial() { const L = 'abcdefghjkmnpqrstuvwxyz'; let x = ''; for (let i = 0; i < 4; i++) x += L[crypto.randomInt(L.length)]; return x + '-' + crypto.randomInt(1000, 9999); }
@@ -177,7 +195,7 @@ function H(x) { return crypto.createHash('sha256').update(String(x)).digest('hex
 const pega = (obj, k) => obj && Object.prototype.hasOwnProperty.call(obj, k) ? obj[k] : null;
 function auditar(req, quem, acao, alvo) {
   DB.auditoria = DB.auditoria || [];
-  DB.auditoria.push({ em: new Date().toISOString(), quem: quem ? (quem.estado.perfil.nome || quem.fone) : '?', acao, alvo: alvo || '', ip: ipDe(req) });
+  DB.auditoria.push({ em: new Date().toISOString(), quem: quem ? (quem.estado.perfil.nome || quem.fone) : 'Sistema', acao, alvo: alvo || '', ip: req ? ipDe(req) : '' });
   if (DB.auditoria.length > 500) DB.auditoria = DB.auditoria.slice(-500);
   salvarDB();
 }
@@ -198,6 +216,25 @@ function usuario(fone, criar) {
     salvarDB();
   }
   return u;
+}
+/** Primeiro contato pelo WhatsApp segue as regras do cadastro: 7 dias grátis, ou só com convite. */
+function usuarioWhatsApp(fone) {
+  const ja = DB.usuarios[chaveFone(fone)];
+  if (ja) return ja;
+  if (DB.config && DB.config.cadastroAberto === false) return null;
+  const u = usuario(fone, true);
+  u.criadoPor = 'whatsapp';
+  if (!ehAdmin(u)) { u.plano = (DB.config && DB.config.planoCadastro) || 'gratis'; u.validade = calcValidade(u.plano); }
+  salvarDB();
+  return u;
+}
+/** Apaga a conta e tudo o que aponta para ela. Os backups somem sozinhos em até 3 dias. */
+function apagarConta(u) {
+  const k = chaveFone(u.fone);
+  for (const nome of ['tokens', 'convites', 'resets', 'tgcodigos']) for (const [c, v] of Object.entries(DB[nome] || {})) if (v.k === k) delete DB[nome][c];
+  if (u.telegram && DB.tg) delete DB.tg[u.telegram];
+  delete DB.usuarios[k];
+  salvarDB();
 }
 function porToken(t) {
   const s = t && pega(DB.tokens, H(t));
@@ -228,7 +265,7 @@ function linkEntrada(u) { return `${CFG.url}/?t=${novaSessao(u)}`; }
 
 // ------------------------------------------------------------------ WhatsApp
 async function waApi(caminho, corpo) {
-  const r = await fetch(`https://graph.facebook.com/${CFG.waVersao}/${caminho}`, {
+  const r = await fetch(`${CFG.waBase}/${CFG.waVersao}/${caminho}`, {
     method: corpo ? 'POST' : 'GET',
     headers: { Authorization: 'Bearer ' + CFG.waToken, 'Content-Type': 'application/json' },
     body: corpo ? JSON.stringify(corpo) : undefined
@@ -237,25 +274,66 @@ async function waApi(caminho, corpo) {
   if (!r.ok) throw new Error('WhatsApp ' + r.status + ': ' + JSON.stringify(j.error || j));
   return j;
 }
-/** Envia mensagem. Fora da janela de 24h a Meta exige modelo (template) aprovado. */
+/** Por onde esta pessoa recebe lembretes. Vazio: por nenhum canal ainda. */
+function canalDe(u) {
+  const zap = !DEMO && u.verificado !== false;
+  if (u.canal === 'whatsapp' && zap) return 'whatsapp';
+  if (u.telegram) return 'telegram';
+  return zap ? 'whatsapp' : '';
+}
+const dentroDaJanela = (u) => Date.now() - (u.ultimaMsg || 0) < 23.5 * 3600 * 1000;
+/** Parâmetro de modelo: sem quebra de linha, sem marcação e nunca vazio (regras da Meta). */
+const paramModelo = (x) => String(x == null ? '' : x).replace(/[*_]/g, '').replace(/[\n\t]+/g, ' • ').replace(/\s{2,}/g, ' ').trim().slice(0, 700) || '-';
+/**
+ * Envia mensagem pelo canal da pessoa. Fora da janela de 24h o WhatsApp só aceita modelo aprovado:
+ * quem não tem modelo (versículo, incentivo) simplesmente não é enviado, e não gera custo.
+ */
 async function enviar(u, texto, opts = {}) {
-  u.estado.chat = u.estado.chat || [];
-  u.estado.chat.push({ de: 'bot', txt: texto, em: Date.now() });
-  if (u.estado.chat.length > 200) u.estado.chat = u.estado.chat.slice(-200);
-  salvarDB();
-  const canal = opts.canal || (u.telegram && (DEMO || u.verificado === false || u.canal === 'telegram') ? 'telegram' : 'whatsapp');
+  const canal = opts.canal || canalDe(u);
+  const direto = canal === 'whatsapp' && !DEMO && (dentroDaJanela(u) || opts.forcarTexto);
+  if (canal === 'whatsapp' && !DEMO && !direto && !opts.modelo) return;
+  if (!opts.semChat) {
+    u.estado.chat = u.estado.chat || [];
+    u.estado.chat.push({ de: 'bot', txt: texto, em: Date.now() });
+    if (u.estado.chat.length > 200) u.estado.chat = u.estado.chat.slice(-200);
+    salvarDB();
+  }
   if (canal === 'telegram') { if (u.telegram) return tgEnviar(u.telegram, texto); return; }
+  if (canal !== 'whatsapp') return;
   if (DEMO) { if (LOG_MENSAGENS) log('[DEMO → ' + u.fone + ']\n' + texto); return; }
-  const dentroJanela = Date.now() - (u.ultimaMsg || 0) < 23.5 * 3600 * 1000;
   try {
-    if (dentroJanela || !CFG.template || opts.forcarTexto) {
+    if (direto) {
       await waApi(`${CFG.waPhoneId}/messages`, { messaging_product: 'whatsapp', to: u.fone, type: 'text', text: { body: texto.slice(0, 4000), preview_url: true } });
     } else {
-      // parâmetros de modelo não aceitam quebra de linha
-      const p = texto.replace(/\n+/g, ' • ').replace(/\s{4,}/g, '   ').slice(0, 1000);
-      await waApi(`${CFG.waPhoneId}/messages`, { messaging_product: 'whatsapp', to: u.fone, type: 'template', template: { name: CFG.template, language: { code: CFG.templateLang }, components: [{ type: 'body', parameters: [{ type: 'text', text: p }] }] } });
+      await waApi(`${CFG.waPhoneId}/messages`, { messaging_product: 'whatsapp', to: u.fone, type: 'template', template: { name: opts.modelo.nome, language: { code: CFG.templateLang }, components: [{ type: 'body', parameters: opts.modelo.params.map((p) => ({ type: 'text', text: paramModelo(p) })) }] } });
     }
   } catch (e) { log('Falha ao enviar para', u.fone, e.message); }
+}
+/** Número que nunca falou com o Sonhaí, com o cadastro fechado. */
+async function semConvite(fone) {
+  const txt = `Olá! 💙 O Sonhaí está funcionando só com convite neste momento.${suporte() ? ' Para pedir seu acesso, fale com o suporte: ' + fmtFone(suporte()) + '.' : ''}`;
+  if (DEMO) { if (LOG_MENSAGENS) log('[DEMO → ' + fone + ']\n' + txt); return; }
+  await waApi(`${CFG.waPhoneId}/messages`, { messaging_product: 'whatsapp', to: normFone(fone), type: 'text', text: { body: txt } }).catch((e) => log('Falha ao enviar para', fone, e.message));
+}
+async function enviarEmail(para, assunto, texto) {
+  if (!EMAIL_LIGADO || !para) return false;
+  try {
+    const r = await fetch(CFG.brevoBase + '/v3/smtp/email', { method: 'POST', headers: { 'api-key': CFG.brevo, 'Content-Type': 'application/json', accept: 'application/json' }, body: JSON.stringify({ sender: { name: 'Sonhaí', email: CFG.emailDe }, to: [{ email: para }], subject: assunto, textContent: texto }) });
+    if (!r.ok) throw new Error('Brevo ' + r.status);
+    return true;
+  } catch (e) { log('Falha ao enviar e-mail:', e.message); return false; }
+}
+/** Link de nova senha: pelo e-mail e pelo Telegram da conta. Nunca fica guardado na conversa. */
+function linkNovaSenha(u) {
+  const cod = crypto.randomBytes(16).toString('base64url');
+  DB.resets[H(cod)] = { k: chaveFone(u.fone), em: Date.now() }; salvarDB();
+  return `${CFG.url}/?r=${cod}`;
+}
+async function enviarNovaSenha(u) {
+  const link = linkNovaSenha(u);
+  const nome = (u.estado.perfil && u.estado.perfil.nome) || '';
+  await enviarEmail(u.email, 'Sonhaí: crie uma senha nova', `Olá${nome ? ', ' + nome : ''}!\n\nPara criar uma senha nova no Sonhaí, abra este link (vale por 30 minutos):\n${link}\n\nSe não foi você que pediu, é só ignorar este e-mail.`);
+  if (u.telegram) await tgEnviar(u.telegram, `🔐 Para criar uma senha nova, toque no link (vale por 30 minutos):\n${link}\n\nSe não foi você que pediu, é só ignorar.`);
 }
 async function baixarMidia(id) {
   const meta = await waApi(id);
@@ -335,20 +413,22 @@ async function tgReceber(msg) {
 // ------------------------------------------------------------------ conversa
 async function receber(fone, texto, origemAudio) {
   const novo = !DB.usuarios[chaveFone(fone)];
-  const u = usuario(fone, true);
+  const u = usuarioWhatsApp(fone);
+  if (!u) return semConvite(fone);
   u.ultimaMsg = Date.now();
   u.fone = normFone(fone); // o número exato que o WhatsApp usa
   const t0 = CC.sem(texto).trim();
+  const zap = { canal: 'whatsapp' };
   // conta criada no app e ainda não confirmada pelo WhatsApp
   if (u.verificado === false) {
     const m0 = t0.match(/^sonhai\s*(\d{4})$/);
-    if (m0 && m0[1] === u.codigo) { u.verificado = true; delete u.codigo; salvarDB(); return enviar(u, `✅ WhatsApp confirmado, ${u.estado.perfil.nome || ''}! 💙\nAgora você pode lançar gastos por aqui, por texto ou áudio, e vai receber os lembretes.\n\n` + CC.textoAjuda(u.estado).split('\n').slice(2).join('\n')); }
-    if (t0 === 'nova conta') { DB.usuarios[chaveFone(fone)] = null; delete DB.usuarios[chaveFone(fone)]; salvarDB(); return receber(fone, 'oi'); }
-    return enviar(u, '🔐 Existe uma conta Sonhaí com este número esperando confirmação.\nSe foi você que criou, mande o código que aparece no app, assim: *SONHAI 1234*\n\nNão foi você? Responda *NOVA CONTA* para começar a sua.', { forcarTexto: true });
+    if (m0 && m0[1] === u.codigo) { u.verificado = true; delete u.codigo; salvarDB(); return enviar(u, `✅ WhatsApp confirmado, ${u.estado.perfil.nome || ''}! 💙\nAgora você pode lançar gastos por aqui, por texto ou áudio, e vai receber os lembretes.\n\n` + CC.textoAjuda(u.estado).split('\n').slice(2).join('\n'), zap); }
+    if (t0 === 'nova conta') { apagarConta(u); return receber(fone, 'oi'); }
+    return enviar(u, '🔐 Existe uma conta Sonhaí com este número esperando confirmação.\nSe foi você que criou, mande o código que aparece no app, assim: *SONHAI 1234*\n\nNão foi você? Responda *NOVA CONTA* para começar a sua.', { canal: 'whatsapp', forcarTexto: true });
   }
   if (novo) {
     u.estado.chat.push({ de: 'me', txt: texto, em: Date.now() });
-    await enviar(u, `Olá! 💙 Que alegria ter você aqui.\nEu sou o *Sonhaí* e vou te ajudar a organizar o dinheiro sem complicação.\n\n📲 Abra seu app e crie sua senha:\n${linkEntrada(u)}\n\nComo você gostaria de ser chamado(a)? Responda: "meu nome é ..."`);
+    await enviar(u, `Olá! 💙 Que alegria ter você aqui.\nEu sou o *Sonhaí* e vou te ajudar a organizar o dinheiro sem complicação.${u.validade ? `\n\n🎁 Você tem acesso grátis até ${CC.dataBR(u.validade)}.` : ''}\n\n📲 Abra seu app e crie sua senha:\n${linkEntrada(u)}\n\nAo continuar, você concorda com os Termos (${CFG.url}/termos.html) e a Política de Privacidade (${CFG.url}/privacidade.html).\n\nComo você gostaria de ser chamado(a)? Responda: "meu nome é ..."`, zap);
     if (/^(oi|ola|bom dia|boa tarde|boa noite|comecar|começar)\b/.test(t0)) return;
   }
   return processar(u, texto, origemAudio, 'whatsapp');
@@ -357,31 +437,28 @@ async function receber(fone, texto, origemAudio) {
 async function processar(u, texto, origemAudio, canal) {
   texto = String(texto || '').slice(0, 500);
   const env = (msg, o) => enviar(u, msg, Object.assign({ canal }, o || {}));
+  const t = CC.sem(texto).trim();
+  // apagar os dados é um direito da pessoa: vale mesmo com o acesso vencido ou suspenso
+  if (/^apagar meus dados$/.test(t)) return env('⚠️ Isso apaga TODOS os seus lançamentos, contas, sonhos e compromissos, sem volta.\nSe tiver certeza, responda exatamente: *CONFIRMAR APAGAR*');
+  if (/^confirmar apagar$/.test(t)) {
+    const tg = u.telegram;
+    apagarConta(u);
+    const adeus = '🗑️ Pronto, seus dados foram apagados. Se quiser voltar, é só criar uma conta nova. Foi um prazer! 💙';
+    if (canal === 'telegram' && tg) await tgEnviar(tg, adeus);
+    if (canal === 'whatsapp' && !DEMO) await waApi(`${CFG.waPhoneId}/messages`, { messaging_product: 'whatsapp', to: u.fone, type: 'text', text: { body: adeus } }).catch(() => {});
+    return;
+  }
   if (u.bloqueado) return env('Seu acesso está suspenso. Fale com o suporte do Sonhaí.');
+  if (/^(esqueci (a |minha )?senha|recuperar senha|trocar senha|nova senha)$/.test(t)) return env(`🔐 Para criar uma senha nova, toque no link (vale por 30 minutos):\n${linkNovaSenha(u)}\n\nSe não foi você que pediu, é só ignorar.`, { forcarTexto: true, semChat: true });
   if (expirado(u)) return env(msgExpirado(u));
   u.estado.chat.push({ de: 'me', txt: (origemAudio ? '🎤 ' : '') + texto, em: Date.now() });
   const hoje = CC.agora(CFG.tz);
   if (CC.garantirRendas(u.estado, hoje)) u.rev++;
-  const t = CC.sem(texto).trim();
-  if (/^(esqueci (a |minha )?senha|recuperar senha|trocar senha|nova senha)$/.test(t)) {
-    const cod = crypto.randomBytes(16).toString('base64url');
-    DB.resets[H(cod)] = { k: chaveFone(u.fone), em: Date.now() }; salvarDB();
-    return env(`🔐 Para criar uma senha nova, toque no link (vale por 30 minutos):\n${CFG.url}/?r=${cod}\n\nSe não foi você que pediu, é só ignorar.`, { forcarTexto: true });
-  }
   let m = t.match(/^(meu nome e|me chame de|pode me chamar de|sou o|sou a)\s+(.+)/);
   if (m) {
     const nome = texto.split(/\s+/).slice(texto.split(/\s+/).length - m[2].split(/\s+/).length).join(' ').replace(/[.!]$/, '');
     u.estado.perfil.nome = nome.charAt(0).toUpperCase() + nome.slice(1); u.estado.perfilUpd = Date.now(); u.rev++;
     return env(`Prazer, ${u.estado.perfil.nome}! 🤗\n\n` + CC.textoAjuda(u.estado).split('\n').slice(2).join('\n'));
-  }
-  if (/^apagar meus dados$/.test(t)) return env('⚠️ Isso apaga TODOS os seus lançamentos, contas, sonhos e compromissos, sem volta.\nSe tiver certeza, responda exatamente: *CONFIRMAR APAGAR*');
-  if (/^confirmar apagar$/.test(t)) {
-    for (const [tk, v] of Object.entries(DB.tokens)) if (v.k === chaveFone(u.fone)) delete DB.tokens[tk];
-    delete DB.usuarios[chaveFone(u.fone)]; salvarDB();
-    const adeus = '🗑️ Pronto, seus dados foram apagados. Se quiser voltar, é só criar uma conta nova. Foi um prazer! 💙';
-    if (u.telegram) { if (DB.tg) delete DB.tg[u.telegram]; if (canal === 'telegram') await tgEnviar(u.telegram, adeus); }
-    if (canal === 'whatsapp' && !DEMO) await waApi(`${CFG.waPhoneId}/messages`, { messaging_product: 'whatsapp', to: u.fone, type: 'text', text: { body: adeus } }).catch(() => {});
-    return;
   }
   if (/^(link|app|aplicativo|abrir app|meu app)\b/.test(t)) return env(`📲 Seu acesso ao app (vale para este celular; não compartilhe):\n${linkEntrada(u)}`, { forcarTexto: true });
   m = t.match(/^(orcamento|meu orcamento|limite do mes)\D*([\d.,]+)/);
@@ -417,59 +494,88 @@ async function backupDiario(hojeIso) {
 }
 
 // ------------------------------------------------------------------ lembretes
-function textoManha(u, hoje) {
+/** Lembrete da manhã. "uteis" é o que a pessoa pediu para lembrar; "extras" (incentivo e versículo) nunca vão em modelo pago. */
+function lembreteManha(u, hoje) {
   const e = u.estado; const nome = e.perfil.nome ? e.perfil.nome.split(/\s+/)[0] : '';
   const venc = CC.contasAVencer(e, hoje, 1);
   const atras = CC.contasAtrasadas(e, hoje);
   const hojeIso = CC.iso(hoje);
   const ag = (e.agenda || []).filter((a) => a.data === hojeIso && !a.feito && a.lembrar !== false).sort((a, b) => (a.hora || '99').localeCompare(b.hora || '99'));
-  const linhas = [];
-  venc.filter((x) => x.emDias === 0).forEach((x) => linhas.push(`🔴 *HOJE* vence: ${x.conta.nome} — ${CC.brl(x.valor)}`));
-  venc.filter((x) => x.emDias === 1).forEach((x) => linhas.push(`🟡 *Amanhã* vence: ${x.conta.nome} — ${CC.brl(x.valor)}`));
+  const uteis = []; const extras = [];
+  venc.filter((x) => x.emDias === 0).forEach((x) => uteis.push(`🔴 *HOJE* vence: ${x.conta.nome} — ${CC.brl(x.valor)}`));
+  venc.filter((x) => x.emDias === 1).forEach((x) => uteis.push(`🟡 *Amanhã* vence: ${x.conta.nome} — ${CC.brl(x.valor)}`));
   const fv = CC.faturasAVencer(e, hoje, 1);
-  fv.forEach((x) => linhas.push(`${x.emDias ? '🟡 *Amanhã*' : '🔴 *HOJE*'} vence a fatura do cartão *${x.fatura.cartao.nome}* — ${CC.brl(x.fatura.falta)}${x.fatura.situacao === 'parcial' ? ' (restante)' : ''}`));
-  if (atras.length && hoje.getDay() === 1) atras.forEach((c) => linhas.push(`⚠️ Em atraso: ${c.nome} (dia ${c.dia}) — ${CC.brl(CC.valorConta(c, hojeIso.slice(0, 7)))}`));
-  if (hoje.getDate() === 1) (e.anuais || []).filter((a) => +a.mes === hoje.getMonth() + 1).forEach((a) => linhas.push(`📌 Este mês vence: ${a.nome} — ${CC.brl(a.valor)}`));
-  if (ag.length) { linhas.push(''); linhas.push('📌 *Compromissos de hoje:*'); ag.forEach((a) => linhas.push(`• ${a.hora ? a.hora + ' — ' : ''}${a.titulo}`)); }
+  fv.forEach((x) => uteis.push(`${x.emDias ? '🟡 *Amanhã*' : '🔴 *HOJE*'} vence a fatura do cartão *${x.fatura.cartao.nome}* — ${CC.brl(x.fatura.falta)}${x.fatura.situacao === 'parcial' ? ' (restante)' : ''}`));
+  if (atras.length && hoje.getDay() === 1) atras.forEach((c) => uteis.push(`⚠️ Em atraso: ${c.nome} (dia ${c.dia}) — ${CC.brl(CC.valorConta(c, hojeIso.slice(0, 7)))}`));
+  if (hoje.getDate() === 1) (e.anuais || []).filter((a) => +a.mes === hoje.getMonth() + 1).forEach((a) => uteis.push(`📌 Este mês vence: ${a.nome} — ${CC.brl(a.valor)}`));
+  const compromissos = ag.map((a) => `${a.hora ? a.hora + ' — ' : ''}${a.titulo}`);
   // segunda-feira: incentivo dos sonhos
   if (hoje.getDay() === 1 && (e.sonhos || []).some((s) => s.custo)) {
     const s = e.sonhos.filter((x) => x.custo).sort((a, b) => CC.totalSonho(b) / b.custo - CC.totalSonho(a) / a.custo)[0];
     const pct = Math.round(CC.totalSonho(s) / s.custo * 100);
-    linhas.push(''); linhas.push(`⭐ Seu sonho *${s.nome}* está em ${pct}%. ${CC.INCENTIVOS[hoje.getDate() % CC.INCENTIVOS.length]}`);
+    extras.push(`⭐ Seu sonho *${s.nome}* está em ${pct}%. ${CC.INCENTIVOS[hoje.getDate() % CC.INCENTIVOS.length]}`);
   }
-  // sem nada para lembrar, só manda o versículo pelo Telegram (grátis); no WhatsApp cada mensagem tem custo
-  if (!linhas.length && !(u.telegram && e.perfil.versiculo !== false)) return '';
-  if (e.perfil.versiculo !== false) { const v = CC.versiculoDoDia(hoje); if (linhas.length) linhas.push(''); linhas.push(`📖 _"${v.texto}"_ (${v.ref})`); }
+  if (e.perfil.versiculo !== false) { const v = CC.versiculoDoDia(hoje); extras.push(`📖 _"${v.texto}"_ (${v.ref})`); }
+  const temUtil = uteis.length || compromissos.length;
+  if (!temUtil && !extras.length) return null;
+  // sem nada para lembrar, só o Telegram recebe o versículo: é grátis
+  if (!temUtil && canalDe(u) !== 'telegram') return null;
+  const partes = [];
+  if (uteis.length) partes.push(uteis.join('\n'));
+  if (compromissos.length) partes.push('📌 *Compromissos de hoje:*\n' + compromissos.map((c) => '• ' + c).join('\n'));
+  if (extras.length) partes.push(extras.join('\n\n'));
   const temConta = venc.length || atras.length || fv.length;
-  const h = hoje.getHours(); const sd = h < 12 ? "Bom dia" : h < 18 ? "Boa tarde" : "Boa noite";
-  return `${sd}${nome ? ', ' + nome : ''}! ☀️💙\n\n` + linhas.join('\n') + (temConta ? '\n\nQuando pagar, me responda: "paguei a conta de ..." ou "paguei a fatura do ..." (ou "paguei 500 da fatura do ..." se for parcial) ✅' : '');
+  const h = hoje.getHours(); const sd = h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite';
+  const texto = `${sd}${nome ? ', ' + nome : ''}! ☀️💙\n\n` + partes.join('\n\n') + (temConta ? '\n\nQuando pagar, me responda: "paguei a conta de ..." ou "paguei a fatura do ..." (ou "paguei 500 da fatura do ..." se for parcial) ✅' : '');
+  const modelo = temUtil ? { nome: CFG.modelos.dia, params: [nome || 'tudo bem', uteis.concat(compromissos).join(' • ').replace(/[🔴🟡⚠️📌]/gu, '').replace(/\s+/g, ' ').trim()] } : null;
+  return { texto, modelo };
 }
-function textoFimDoMes(u, hoje) {
+function lembreteFimDoMes(u, hoje) {
   const r = CC.resumoMes(u.estado, CC.mesDe(CC.iso(hoje)));
-  if (!r.entradas && !r.gastoTotal) return '';
+  if (!r.entradas && !r.gastoTotal) return null;
   const cab = r.sobra >= 0 ? `🏆 *Parabéns!* ${CC.nomeMes(r.ym)} está terminando com saldo positivo de ${CC.brl(r.sobra)}${r.guardado ? ' e você ainda guardou ' + CC.brl(r.guardado) + ' para os seus sonhos' : ''}! Que orgulho! 🎉` : `💛 ${CC.nomeMes(r.ym)} está terminando no vermelho (${CC.brl(r.sobra)}). Tudo bem — mês que vem a gente ajusta junto. Comece revendo ${r.maiorCategoria ? r.maiorCategoria.nome : 'os gastos do dia a dia'}.`;
-  return cab + '\n\n' + CC.textoResumo(u.estado, r.ym, hoje).split('\n').slice(2, 10).join('\n');
+  const nome = u.estado.perfil.nome ? u.estado.perfil.nome.split(/\s+/)[0] : 'tudo bem';
+  return { texto: cab + '\n\n' + CC.textoResumo(u.estado, r.ym, hoje).split('\n').slice(2, 10).join('\n'), modelo: { nome: CFG.modelos.mes, params: [nome, CC.nomeMes(r.ym), CC.brl(r.entradas), CC.brl(r.gastoTotal), CC.brl(r.guardado), CC.brl(r.sobra)] } };
+}
+/** Conta vencida há mais tempo que a retenção é apagada; antes disso a pessoa é avisada. */
+async function limparVencidas(hojeIso, hm) {
+  if (hm < '04:00' || limparVencidas.dia === hojeIso) return;
+  limparVencidas.dia = hojeIso;
+  for (const u of Object.values(DB.usuarios)) {
+    if (!u || u.bloqueado || !expirado(u)) continue;
+    const faltam = diasParaApagar(u);
+    if (faltam <= 0) { apagarConta(u); auditar(null, null, 'apagou conta vencida (retenção de ' + CFG.retencao + ' dias)'); continue; }
+    if (faltam !== 15 && faltam !== 1) continue;
+    u.enviados = u.enviados || {};
+    const chave = 'ret:' + u.validade + ':' + faltam;
+    if (u.enviados[chave]) continue;
+    u.enviados[chave] = Date.now(); salvarDB();
+    const txt = `⏳ Seu acesso ao Sonhaí venceu em ${CC.dataBR(u.validade)} e seus dados serão apagados em ${faltam} ${faltam === 1 ? 'dia' : 'dias'}. Para manter tudo, renove${suporte() ? ' falando com o suporte: ' + fmtFone(suporte()) : ''}. Você também pode entrar em ${CFG.url} e baixar uma cópia.`;
+    await enviar(u, txt);
+    await enviarEmail(u.email, 'Sonhaí: seus dados serão apagados em breve', txt);
+  }
 }
 async function ciclo() {
   const agora = CC.agora(CFG.tz);
   const hojeIso = CC.iso(agora);
   const hm = CC.pad(agora.getHours()) + ':' + CC.pad(agora.getMinutes());
   if (hm >= '03:00') backupDiario(hojeIso);
+  await limparVencidas(hojeIso, hm);
   for (const [kk, v] of tentativas) if (Date.now() - v.em > 15 * 60e3) tentativas.delete(kk);
   for (const nome of ['resets', 'tgcodigos']) for (const [kk, v] of Object.entries(DB[nome] || {})) if (Date.now() - v.em > 864e5) delete DB[nome][kk];
   for (const u of Object.values(DB.usuarios)) {
-    if (!u || (u.verificado === false && !u.telegram) || u.bloqueado || expirado(u)) continue;
+    if (!u || !canalDe(u) || u.bloqueado || expirado(u)) continue;
     const e = u.estado; u.enviados = u.enviados || {};
-    const marca = async (chave, fn) => { if (u.enviados[chave]) return; u.enviados[chave] = Date.now(); salvarDB(); const t = fn(); if (t) await enviar(u, t); };
+    const marca = async (chave, fn) => { if (u.enviados[chave]) return; u.enviados[chave] = Date.now(); salvarDB(); const m = fn(); if (m) await enviar(u, m.texto, { modelo: m.modelo }); };
     try {
       if (CC.garantirRendas(e, agora)) { u.rev++; salvarDB(); }
-      if (hm >= (e.perfil.lembreteHora || '08:00')) await marca('manha:' + hojeIso, () => textoManha(u, agora));
+      if (hm >= (e.perfil.lembreteHora || '08:00')) await marca('manha:' + hojeIso, () => lembreteManha(u, agora));
       for (const a of e.agenda || []) {
         if (!a.hora || a.feito || a.lembrar === false || a.data !== hojeIso) continue;
         const [h, m] = a.hora.split(':').map(Number); const min = h * 60 + m - (agora.getHours() * 60 + agora.getMinutes());
-        if (min <= 60 && min > 0) await marca('ag:' + a.id, () => `⏰ Daqui a ${min} min: *${a.titulo}* (${a.hora}). Pode contar com o Sonhaí! 💙`);
+        if (min <= 60 && min > 0) await marca('ag:' + a.id, () => ({ texto: `⏰ Daqui a ${min} min: *${a.titulo}* (${a.hora}). Pode contar com o Sonhaí! 💙`, modelo: { nome: CFG.modelos.compromisso, params: [e.perfil.nome ? e.perfil.nome.split(/\s+/)[0] : 'tudo bem', a.titulo, a.hora] } }));
       }
-      if (agora.getDate() === CC.diasNoMes(hojeIso.slice(0, 7)) && hm >= '19:00') await marca('fim:' + hojeIso.slice(0, 7), () => textoFimDoMes(u, agora));
+      if (agora.getDate() === CC.diasNoMes(hojeIso.slice(0, 7)) && hm >= '19:00') await marca('fim:' + hojeIso.slice(0, 7), () => lembreteFimDoMes(u, agora));
     } catch (err) { log('lembrete', u.fone, err.message); }
     // limpa marcas antigas
     for (const k of Object.keys(u.enviados)) if (Date.now() - u.enviados[k] > 40 * 864e5) delete u.enviados[k];
@@ -488,14 +594,38 @@ function testeLiberado(req) {
   if (CFG.admin) { const a = Buffer.from(String(req.headers['x-admin-key'] || '')); const b = Buffer.from(CFG.admin); return a.length === b.length && crypto.timingSafeEqual(a, b); }
   return !PRODUCAO && /^(127\.0\.0\.1|::1|::ffff:127\.0\.0\.1)$/.test(req.socket.remoteAddress || '') && !req.headers['x-forwarded-for'];
 }
-function autenticar(req) {
+/** Só confere a sessão: quem está com o acesso vencido ainda pode ver a conta, baixar e excluir os dados. */
+function autenticarConta(req) {
   const u = porToken((req.headers.authorization || '').replace(/^Bearer\s+/i, ''));
-  if (!u || u.bloqueado || expirado(u)) return null;
+  return !u || u.bloqueado ? null : u;
+}
+function autenticar(req) {
+  const u = autenticarConta(req);
+  if (!u || expirado(u)) return null;
   if (Date.now() - (u.ultimo || 0) > 3600e3) { u.ultimo = Date.now(); salvarDB(); }
   return u;
 }
 
 const CSP = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'";
+const escHtml = (x) => String(x == null ? '' : x).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+/** Preenche a Política e os Termos com os dados configurados no servidor. */
+function preencherLegal(html) {
+  const contato = CFG.contato ? `pelo e-mail ${CFG.contato}` : suporte() ? `pelo WhatsApp ${fmtFone(suporte())}` : 'pelos canais de atendimento do Sonhaí';
+  const resp = CFG.empresa ? CFG.empresa + (CFG.empresaDoc ? ', ' + CFG.empresaDoc : '') : 'equipe do Sonhaí';
+  return html.replace(/\{\{RESPONSAVEL\}\}/g, escHtml(resp)).replace(/\{\{CONTATO\}\}/g, escHtml(contato)).replace(/\{\{RETENCAO\}\}/g, String(CFG.retencao)).replace(/\{\{VERSAO\}\}/g, VERSAO_TERMOS.split('-').reverse().join('/'));
+}
+const csvCampo = (x) => { const s = String(x == null ? '' : x); return /[";\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+/** Cópia dos dados da pessoa, sem senha nem códigos internos. */
+function dadosDaConta(u) {
+  const { desfazer, pendente, ...estado } = u.estado;
+  return { geradoEm: new Date().toISOString(), conta: { nome: estado.perfil && estado.perfil.nome, whatsapp: u.fone, email: u.email || '', plano: u.plano || '', validade: u.validade || null, criadaEm: new Date(u.criadoEm || 0).toISOString(), aceite: u.aceite || null }, dados: estado };
+}
+function csvDaConta(u) {
+  const L = (u.estado.lancamentos || []).slice().sort((a, b) => String(a.data).localeCompare(String(b.data)));
+  const linhas = [['Data', 'Tipo', 'Descrição', 'Categoria', 'Valor', 'Pagamento'].join(';')];
+  for (const l of L) linhas.push([l.data, l.tipo === 'entrada' ? 'Entrada' : 'Gasto', l.desc, l.cat, String(Number(l.valor) || 0).replace('.', ','), l.pagamento || ''].map(csvCampo).join(';'));
+  return '\ufeff' + linhas.join('\r\n');
+}
 const servidor = http.createServer(async (req, res) => {
   res.setHeader('Content-Security-Policy', CSP);
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -529,13 +659,16 @@ const servidor = http.createServer(async (req, res) => {
           try {
             if (msg.type === 'text') await receber(msg.from, msg.text.body);
             else if (msg.type === 'audio') {
-              const u = usuario(msg.from, true); u.ultimaMsg = Date.now();
+              const u = usuarioWhatsApp(msg.from); if (!u) return semConvite(msg.from);
+              u.ultimaMsg = Date.now();
+              if (bloqueado('aud:' + chaveFone(u.fone), 60)) return enviar(u, 'Muitos áudios em pouco tempo. Espere alguns minutos. 🙂', { canal: 'whatsapp' });
+              errou('aud:' + chaveFone(u.fone));
               try { const m = await baixarMidia(msg.audio.id); const txt = await transcrever(m.buf, m.tipo); if (!txt) throw new Error('vazio'); await receber(msg.from, txt, true); }
-              catch (e) { log('áudio', e.message); await enviar(u, '🙈 Não consegui entender o áudio. Pode repetir ou escrever?'); }
+              catch (e) { log('áudio', e.message); await enviar(u, '🙈 Não consegui entender o áudio. Pode repetir ou escrever?', { canal: 'whatsapp' }); }
             } else if (msg.type === 'interactive' || msg.type === 'button') {
               const t = (msg.button && msg.button.text) || (msg.interactive && (msg.interactive.button_reply || msg.interactive.list_reply || {}).title) || '';
               if (t) await receber(msg.from, t);
-            } else { const u = usuario(msg.from, true); u.ultimaMsg = Date.now(); await enviar(u, 'Por enquanto eu entendo textos e áudios. 😊 Mande "ajuda" para ver exemplos.'); }
+            } else { const u = usuarioWhatsApp(msg.from); if (!u) return semConvite(msg.from); u.ultimaMsg = Date.now(); await enviar(u, 'Por enquanto eu entendo textos e áudios. 😊 Mande "ajuda" para ver exemplos.', { canal: 'whatsapp' }); }
           } catch (e) { log('mensagem', e.message); }
         })();
       }
@@ -547,7 +680,7 @@ const servidor = http.createServer(async (req, res) => {
       if (USA_SB && Date.now() - (global.ultimoToqueSB || 0) > 6 * 3600e3) { global.ultimoToqueSB = Date.now(); sb('GET', 'kv?select=chave&limit=1').catch((e) => log('saúde', e.message)); }
       return json(res, 200, { ok: true, whatsapp: !DEMO, banco: USA_SB ? 'supabase' : 'arquivo', usuarios: Object.keys(DB.usuarios).length });
     }
-    if (rota === '/api/config') return json(res, 200, { whatsapp: DEMO ? '' : process.env.WHATSAPP_NUMERO_EXIBICAO || '', demo: DEMO, telegram: TG_BOT, cadastroAberto: !(DB.config && DB.config.cadastroAberto === false), suporte: suporte() });
+    if (rota === '/api/config') return json(res, 200, { whatsapp: DEMO ? '' : process.env.WHATSAPP_NUMERO_EXIBICAO || '', demo: DEMO, telegram: TG_BOT, cadastroAberto: !(DB.config && DB.config.cadastroAberto === false), suporte: suporte(), email: EMAIL_LIGADO, retencao: CFG.retencao });
     if (rota === '/api/acesso') {
       const c = pega(DB.convites, H(url.searchParams.get('c') || ''));
       const u = c && DB.usuarios[c.k];
@@ -585,7 +718,12 @@ const servidor = http.createServer(async (req, res) => {
           lancamentos: lista.reduce((x, u) => x + u.lancamentos, 0), bytes: Buffer.byteLength(JSON.stringify(DB.usuarios)) };
         totais.expirados = lista.filter((u) => u.expirado).length;
         totais.vencendo = lista.filter((u) => u.dias != null && u.dias >= 0 && u.dias <= 7).length;
-        return json(res, 200, { auditoria: (DB.auditoria || []).slice(-60).reverse(), usuarios: lista, totais, planos: PLANOS, config: { cadastroAberto: !(DB.config && DB.config.cadastroAberto === false) } });
+        const pendencias = [];
+        if (!CFG.empresa) pendencias.push('Nome do responsável: variável EMPRESA_NOME');
+        if (!CFG.empresaDoc) pendencias.push('CPF ou CNPJ do responsável: variável EMPRESA_DOC');
+        if (!CFG.contato) pendencias.push('E-mail de contato da privacidade: variável CONTATO_EMAIL');
+        if (!EMAIL_LIGADO) pendencias.push('Envio de e-mail para recuperar senha: variáveis BREVO_API_KEY e EMAIL_REMETENTE');
+        return json(res, 200, { pendencias, auditoria: (DB.auditoria || []).slice(-60).reverse(), usuarios: lista, totais, planos: PLANOS, config: { cadastroAberto: !(DB.config && DB.config.cadastroAberto === false) } });
       }
       let b = {}; if (req.method === 'POST') { try { b = JSON.parse((await lerCorpo(req, 64 * 1024)).toString() || '{}'); } catch (e) { /* vazio */ } }
       if (rota === '/api/admin/criar' && req.method === 'POST') {
@@ -625,9 +763,7 @@ const servidor = http.createServer(async (req, res) => {
         return json(res, 200, { senha, link: `${CFG.url}/?acesso=${c}`, mensagem: textoAcesso(alvo, senha, c), fone: alvo.fone });
       }
       if (rota === '/api/admin/excluir') {
-        for (const [tk, v] of Object.entries(DB.tokens)) if (v.k === b.k) delete DB.tokens[tk];
-        if (alvo.telegram && DB.tg) delete DB.tg[alvo.telegram];
-        auditar(req, a, 'EXCLUIU usuário', alvo.estado.perfil.nome + ' ' + fmtFone(alvo.fone)); delete DB.usuarios[b.k]; salvarDB(); return json(res, 200, { ok: true });
+        auditar(req, a, 'EXCLUIU usuário', alvo.estado.perfil.nome + ' ' + fmtFone(alvo.fone)); apagarConta(alvo); return json(res, 200, { ok: true });
       }
       if (rota === '/api/admin/config') {
         DB.config = DB.config || {};
@@ -652,7 +788,7 @@ const servidor = http.createServer(async (req, res) => {
     }
     if (rota === '/api/telegram/desligar' && req.method === 'POST') {
       const u = autenticar(req); if (!u) return json(res, 401, { erro: 'Entre novamente.' });
-      if (u.telegram && DB.tg) delete DB.tg[u.telegram]; delete u.telegram; salvarDB();
+      if (u.telegram && DB.tg) delete DB.tg[u.telegram]; delete u.telegram; if (u.canal === 'telegram') delete u.canal; salvarDB();
       return json(res, 200, { ok: true });
     }
     const ip = ipDe(req);
@@ -677,7 +813,8 @@ const servidor = http.createServer(async (req, res) => {
       u.email = email; u.criadoPor = 'cadastro';
       if (!ehAdmin(u)) { u.plano = (DB.config && DB.config.planoCadastro) || 'gratis'; u.validade = calcValidade(u.plano); }
       if (b.estado && typeof b.estado === 'object' && !b.estado.demo) { u.estado = CC.sanearEstado(CC.mesclar(u.estado, b.estado)); u.estado.perfil.nome = nome; u.estado.perfil.whatsapp = fone; }
-      if (!DEMO) { u.verificado = false; u.codigo = codigoVerif(); }
+      u.verificado = false; u.codigo = codigoVerif(); // só o próprio dono confirma o número, mesmo com o WhatsApp ainda desligado
+      if (b.aceite === true) u.aceite = { versao: VERSAO_TERMOS, em: new Date().toISOString() };
       salvarDB();
       return json(res, 200, { token: novaSessao(u), verificado: u.verificado !== false, codigo: u.codigo || '' });
     }
@@ -690,23 +827,62 @@ const servidor = http.createServer(async (req, res) => {
       if (!u || !u.senha || !confereSenha(b.senha || '', u.senha)) { errou('f:' + k); errou('ip:' + ip); return json(res, 401, { erro: u && !u.senha ? 'Você ainda não criou senha. Mande "esqueci minha senha" para o Sonhaí no WhatsApp.' : 'WhatsApp/e-mail ou senha incorretos.' }); }
       tentativas.delete('f:' + k);
       if (u.bloqueado) return json(res, 403, { erro: 'Seu acesso está suspenso. Fale com o suporte do Sonhaí.' });
-      if (expirado(u)) return json(res, 403, { erro: msgExpirado(u).replace(/\*/g, '') });
       u.ultimo = Date.now();
-      return json(res, 200, { token: novaSessao(u) });
+      return json(res, 200, { token: novaSessao(u), expirado: expirado(u) });
+    }
+    if (rota === '/api/esqueci' && req.method === 'POST') {
+      // a resposta é sempre igual: ninguém descobre quem tem conta por aqui
+      const b = await corpoJSON();
+      if (bloqueado('esqip:' + ip, 20)) return json(res, 429, { erro: 'Muitas tentativas. Espere alguns minutos.' });
+      errou('esqip:' + ip);
+      const login = String(b.login || '').trim();
+      const u = login.includes('@') ? porEmail(login) : DB.usuarios[chaveFone(login)];
+      if (u && !u.bloqueado) {
+        const k = 'esq:' + chaveFone(u.fone);
+        if (!bloqueado(k, 3)) { errou(k); enviarNovaSenha(u).catch((e) => log('nova senha', e.message)); }
+      }
+      return json(res, 200, { ok: true });
     }
     if (rota === '/api/redefinir' && req.method === 'POST') {
       const b = await corpoJSON(); const r = pega(DB.resets, H(String(b.codigo || '')));
       if (!r || Date.now() - r.em > 30 * 60e3) return json(res, 400, { erro: 'Esse link expirou. Mande "esqueci minha senha" no WhatsApp de novo.' });
       const fr = senhaFraca(b.senha); if (fr) return json(res, 400, { erro: fr });
       const u = DB.usuarios[r.k]; if (!u) return json(res, 400, { erro: 'Conta não encontrada.' });
-      u.senha = hashSenha(b.senha); delete DB.resets[H(String(b.codigo || ''))];
+      u.senha = hashSenha(b.senha); u.trocarSenha = false; delete DB.resets[H(String(b.codigo || ''))];
       for (const [tk, v] of Object.entries(DB.tokens)) if (v.k === r.k) delete DB.tokens[tk]; // derruba sessões antigas
       salvarDB();
       return json(res, 200, { token: novaSessao(u) });
     }
     if (rota === '/api/eu') {
+      const u = autenticarConta(req); if (!u) return json(res, 401, { erro: 'Entre novamente.' });
+      return json(res, 200, { expirado: expirado(u), apagaEm: diasParaApagar(u), aceite: !!(u.aceite && u.aceite.versao === VERSAO_TERMOS), canal: canalDe(u), email: u.email || '', plano: ehAdmin(u) ? 'ilimitado' : (u.plano || 'ilimitado'), planoNome: (PLANOS[ehAdmin(u) ? 'ilimitado' : u.plano] || PLANOS.ilimitado).nome, validade: ehAdmin(u) ? null : (u.validade || null), dias: ehAdmin(u) ? null : diasRestantes(u), trocarSenha: !!u.trocarSenha, suporte: suporte(), admin: ehAdmin(u), telegram: !!u.telegram, fone: u.fone, nome: u.estado.perfil.nome, temSenha: !!u.senha, verificado: u.verificado !== false, codigo: u.verificado === false ? u.codigo : '' });
+    }
+    if (rota === '/api/aceite' && req.method === 'POST') {
+      const u = autenticarConta(req); if (!u) return json(res, 401, { erro: 'Entre novamente.' });
+      u.aceite = { versao: VERSAO_TERMOS, em: new Date().toISOString() }; salvarDB();
+      return json(res, 200, { ok: true });
+    }
+    if (rota === '/api/canal' && req.method === 'POST') {
       const u = autenticar(req); if (!u) return json(res, 401, { erro: 'Entre novamente.' });
-      return json(res, 200, { email: u.email || '', plano: ehAdmin(u) ? 'ilimitado' : (u.plano || 'ilimitado'), planoNome: (PLANOS[ehAdmin(u) ? 'ilimitado' : u.plano] || PLANOS.ilimitado).nome, validade: ehAdmin(u) ? null : (u.validade || null), dias: ehAdmin(u) ? null : diasRestantes(u), trocarSenha: !!u.trocarSenha, suporte: suporte(), admin: ehAdmin(u), telegram: !!u.telegram, fone: u.fone, nome: u.estado.perfil.nome, temSenha: !!u.senha, verificado: u.verificado !== false, codigo: u.verificado === false ? u.codigo : '' });
+      const b = await corpoJSON();
+      if (b.canal === 'telegram' ? !u.telegram : b.canal === 'whatsapp' ? (DEMO || u.verificado === false) : true) return json(res, 400, { erro: 'Esse canal ainda não está conectado.' });
+      u.canal = b.canal; salvarDB();
+      return json(res, 200, { ok: true, canal: canalDe(u) });
+    }
+    if (rota === '/api/meus-dados') {
+      const u = autenticarConta(req); if (!u) return json(res, 401, { erro: 'Entre novamente.' });
+      if (url.searchParams.get('formato') === 'csv') { res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="sonhai-lancamentos.csv"', 'Cache-Control': 'no-store' }); return res.end(csvDaConta(u)); }
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Disposition': 'attachment; filename="sonhai-meus-dados.json"', 'Cache-Control': 'no-store' });
+      return res.end(JSON.stringify(dadosDaConta(u), null, 2));
+    }
+    if (rota === '/api/excluir-conta' && req.method === 'POST') {
+      const u = autenticarConta(req); if (!u) return json(res, 401, { erro: 'Entre novamente.' });
+      if (ehAdmin(u)) return json(res, 400, { erro: 'A conta de administrador não pode ser excluída por aqui.' });
+      const b = await corpoJSON(); const k = 'del:' + chaveFone(u.fone);
+      if (bloqueado(k, 5)) return json(res, 429, { erro: 'Muitas tentativas. Espere 15 minutos.' });
+      if (u.senha && !confereSenha(b.senha || '', u.senha)) { errou(k); return json(res, 403, { erro: 'Senha incorreta.' }); }
+      apagarConta(u);
+      return json(res, 200, { ok: true });
     }
     if (rota === '/api/senha' && req.method === 'POST') {
       const u = autenticar(req); if (!u) return json(res, 401, { erro: 'Entre novamente.' });
@@ -763,6 +939,7 @@ const servidor = http.createServer(async (req, res) => {
     let conteudo = fs.readFileSync(arq);
     const ext = path.extname(arq);
     if (arq.endsWith('index.html')) conteudo = Buffer.from(conteudo.toString().replace('<!--CC_SERVER-->', '<script>window.CC_SERVER=true</script>'));
+    if (arq.endsWith('privacidade.html') || arq.endsWith('termos.html')) conteudo = Buffer.from(preencherLegal(conteudo.toString()));
     res.writeHead(200, { 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY', 'Strict-Transport-Security': 'max-age=31536000', 'Content-Type': TIPOS[ext] || 'application/octet-stream', 'Cache-Control': ext === '.html' || arq.endsWith('sw.js') ? 'no-cache' : 'public, max-age=3600' });
     res.end(conteudo);
   } catch (e) {
