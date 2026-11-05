@@ -52,6 +52,9 @@ const zapEntra = async (de, texto) => { const corpo = JSON.stringify({ entry: [{
   const ana = await cadastro('Ana', '16911110000', 'ana@x.com', { aceite: true });
   const bia = await cadastro('Bia', '16922220000', 'bia@x.com');
 
+  { const g1 = (await req('GET', '/api/estado', null, ana.j.token)).j.estado; confere('conta nova começa com o guia pendente', [g1.perfil.guiaTour, g1.perfil.guiaPassos], [true, true]);
+    const e2 = Object.assign({}, g1, { perfil: Object.assign({}, g1.perfil, { guiaTour: false }), perfilUpd: Date.now() + 1 }); await req('PUT', '/api/estado', { estado: e2 }, ana.j.token);
+    confere('guia visto fica guardado no servidor', (await req('GET', '/api/estado', null, ana.j.token)).j.estado.perfil.guiaTour, false); }
   // item 6: lembretes
   let eu = (await req('GET', '/api/eu', null, ana.j.token)).j;
   confere('sem canal, o app sabe que não há lembrete', [eu.canal, eu.verificado], ['', false]);

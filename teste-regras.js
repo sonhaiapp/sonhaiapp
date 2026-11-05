@@ -153,6 +153,14 @@ confere('crédito mensal não vira renda fixa', le('recebo 800 de ticket todo m�
   fala(e, 'comprei caju 5'); confere('fruta não é o cartão Caju', CC.saldoTicket(e, cj.id), 290);
   confere('saldo genérico mostra todos', fala(e, 'saldo do ticket').msg.split('🎟️').length, 4); }
 { const e = novo(); fala(e, 'caiu 800 no ticket'); fala(e, 'gastei 50 no mercado no ticket'); const x = CC.extratoTicket(e, e.tickets[0].id, '2026-11'); confere('extrato traz crédito e compra', x.map((m) => m.tipo).sort(), ['compra', 'credito']); confere('extrato de outro mês vazio', CC.extratoTicket(e, e.tickets[0].id, '2026-12').length, 0); }
+// ---------------------------------------------------------------- primeiro acesso
+{ const e = CC.marcarPrimeiroAcesso(novo());
+  confere('conta nova tem guia e primeiros passos', [e.perfil.guiaTour, e.perfil.guiaPassos], [true, true]);
+  confere('estado vazio não marca nada: conta antiga não vê o guia', [CC.estadoVazio().perfil.guiaTour, CC.estadoVazio().perfil.guiaPassos], [undefined, undefined]);
+  confere('aparelho novo recebe a marca do servidor', CC.mesclar(CC.estadoVazio(), e).perfil.guiaTour, true);
+  const cel = JSON.parse(JSON.stringify(e)); cel.perfil.guiaTour = false; cel.perfilUpd = e.perfilUpd + 1;
+  confere('guia visto não volta ao sincronizar', [CC.mesclar(cel, e).perfil.guiaTour, CC.mesclar(e, cel).perfil.guiaTour], [false, false]);
+  CC.sanearEstado(e); confere('saneamento mantém a marca', e.perfil.guiaPassos, true); }
 // ---------------------------------------------------------------- frases do guia continuam funcionando
 { const e = novo(); for (const f of ['gastei 45,90 no mercado', 'gastei 10 na lanchonete no cartão de crédito Itaú', 'comprei uma TV de 2000 em 10x no cartão Nubank', 'a fatura do Itaú vence dia 10 e fecha dia 3', 'quanto está a fatura do Itaú', 'paguei a fatura do Itaú', 'paguei 130 de luz', 'recebi 5000 de salário', 'conta de água vence dia 17, 90 reais', 'dentista quinta às 14h', 'guardei 200 para a viagem', 'transfere 100 da viagem para a reserva', 'exclui o gasto de 45,90', 'sim', 'desfazer', 'resumo', 'contas a pagar', 'agenda']) { const r = fala(e, f); if (!r.ok && !r.pergunta) { falhas++; console.log('❌ guia: ' + f + ' → ' + r.msg); } else ok++; } }
 

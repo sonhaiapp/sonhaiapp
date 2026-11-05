@@ -267,6 +267,18 @@ h1,h2,h3{font-family:var(--f-display);line-height:1.1;margin:0;text-wrap:balance
 .tkbtns{display:flex;gap:8px;position:relative;z-index:1}
 .tkbtns button{flex:1;min-width:0;min-height:44px;border:0;border-radius:12px;padding:8px 6px;font-weight:800;font-size:14px;background:rgba(255,255,255,.95);color:#13233A;white-space:nowrap}
 .tkbtns button.sec{background:rgba(0,0,0,.24);color:#fff}
+/* guia do primeiro acesso: escurece a tela e deixa só o ponto certo aceso */
+.gui{position:fixed;inset:0;z-index:55;touch-action:none}
+.gui-luz{position:fixed;border-radius:18px;box-shadow:0 0 0 3px var(--sun),0 0 0 200vmax rgba(10,18,32,.74);transition:left .25s ease,top .25s ease,width .25s ease,height .25s ease;pointer-events:none}
+.gui-luz.sem{left:50%;top:50%;width:0;height:0;box-shadow:0 0 0 200vmax rgba(10,18,32,.74)}
+.gui-box{position:fixed;left:max(16px,calc(50% - 264px));right:max(16px,calc(50% - 264px));background:var(--surface);color:var(--ink);border-radius:20px;padding:16px;box-shadow:var(--shadow);display:grid;gap:8px;max-height:calc(100% - 24px);overflow:auto;touch-action:pan-y}
+.gui-box h3{font-size:22px}
+.gui-box p{margin:0;font-size:15.5px}
+.gui-box .chip{justify-self:start;white-space:normal}
+.gui-topo{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px;font-weight:800;color:var(--ink-2);min-height:32px}
+.gui-barra{height:6px;border-radius:9px;background:var(--surface-2);overflow:hidden}
+.gui-barra i{display:block;height:100%;background:var(--sun);border-radius:9px;transition:width .25s ease}
+@media (max-height:640px){.gui-box{padding:12px;gap:6px}.gui-box h3{font-size:19px}.gui-box p{font-size:14.5px}.gui-box .btn{padding:10px 14px;font-size:15px}.gui-topo{min-height:24px}}
 .cdot{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:4px;vertical-align:baseline}
 canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
 @media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
@@ -942,6 +954,12 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
     };
   }
 
+  /** Conta nova: o app mostra o guia e os primeiros passos. Contas antigas não têm essas marcas. */
+  function marcarPrimeiroAcesso(estado) {
+    estado.perfil.guiaTour = true; estado.perfil.guiaPassos = true; estado.perfilUpd = Date.now();
+    return estado;
+  }
+
   // ------------------------------------------------------------- aplicar ação
   /** Aplica a ação interpretada ao estado. Retorna { ok, msg, item, colecao }. */
   // ------------------------------------------------------------------ limites
@@ -1584,7 +1602,7 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
     CATEGORIAS, TIPOS_ENTRADA, INCENTIVOS, MESES, sem, uid, iso, pad, brl, dataBR, mesDe, nomeMes, mesCurto, somaMes, difMeses, diasNoMes, agora,
     VERSICULOS, versiculoDoDia, LIMITE_VALOR, LIMITE_TEXTO, sanearEstado, BANCOS, detectarCartao, garantirCartao, mesFatura, diaFechamento, vencFatura, fatura, pagarFatura, faturasAVencer, faturaDaVez, rotuloFatura,
     NOME_TICKET, COR_TICKET, detectarTicket, garantirTicket, saldoTicket, gastoTicketMes, extratoTicket, excluirTicket,
-    conversar, interpretar, aplicar, remover, acharExclusao, descreverAlvo, valorConta, definirValorConta, encerrarConta, garantirRendas, acharSonho, retirarDoSonho, estadoVazio, resumoMes, mesesComDados, parcelaNoMes, contaNoMes, contasAVencer, contasAtrasadas, totalSonho,
+    conversar, interpretar, aplicar, remover, acharExclusao, descreverAlvo, valorConta, definirValorConta, encerrarConta, garantirRendas, acharSonho, retirarDoSonho, estadoVazio, marcarPrimeiroAcesso, resumoMes, mesesComDados, parcelaNoMes, contaNoMes, contasAVencer, contasAtrasadas, totalSonho,
     textoResumo, textoContas, textoAgenda, textoAjuda, mensagemHumor, barra, mesclar, adivinharCategoria, extrairValor, extrairData, extrairHora
   };
 });
@@ -1773,7 +1791,7 @@ function tkcardHTML(t){
   const id = t ? t.id : ''; const nome = t ? t.nome : C.NOME_TICKET; const cor = t ? t.cor : C.COR_TICKET;
   const saldo = t ? C.saldoTicket(S, t.id) : 0;
   const rodape = saldo < 0 ? '<span class="st">⚠️ Faltou lançar crédito?</span>' : '<span class="sm">' + (t ? 'Gasto em ' + esc(C.mesCurto(view.ym)) + ': ' + brl(C.gastoTicketMes(S, t.id, view.ym)) : 'Coloque o crédito para começar') + '</span>';
-  return '<div class="ccard" style="background:linear-gradient(135deg,' + cor + ',' + cor + 'CC)"><button class="tkarea" type="button" data-ticket aria-label="Ver extrato do ' + esc(nome) + '"><span class="row1"><span class="nm tk">' + esc(nome).replace('/', '/<wbr>') + '</span><span class="tkico" aria-hidden="true">🎟️</span></span><span class="sm">Saldo disponível</span><span class="tot num">' + brl(saldo) + '</span>' + rodape + '</button><div class="tkbtns"><button type="button" data-tk-credito="' + id + '">+ Crédito</button><button type="button" class="sec" data-tk-compra="' + id + '">− Compra</button></div></div>';
+  return '<div class="ccard tk" style="background:linear-gradient(135deg,' + cor + ',' + cor + 'CC)"><button class="tkarea" type="button" data-ticket aria-label="Ver extrato do ' + esc(nome) + '"><span class="row1"><span class="nm tk">' + esc(nome).replace('/', '/<wbr>') + '</span><span class="tkico" aria-hidden="true">🎟️</span></span><span class="sm">Saldo disponível</span><span class="tot num">' + brl(saldo) + '</span>' + rodape + '</button><div class="tkbtns"><button type="button" data-tk-credito="' + id + '">+ Crédito</button><button type="button" class="sec" data-tk-compra="' + id + '">− Compra</button></div></div>';
 }
 function itemRecarga(r){
   return '<button class="item" data-edit-recarga="' + r.id + '"><span class="ico" style="background:var(--tile-in)">🎟️</span><span class="mid"><span class="ttl">Crédito</span><span class="meta">' + C.dataBR(r.data) + (r.origem === 'voz' ? ' · 🎤' : r.origem === 'whatsapp' ? ' · 💬' : '') + '</span></span><span class="val num in">+ ' + brl(r.valor) + '</span></button>';
@@ -1820,7 +1838,7 @@ TELAS.inicio = function(){
   h += '<section class="card hero" aria-label="Resumo do mês"><div class="cardhead" style="margin:0"><div class="lbl">' + (semRenda ? 'Previsto para sair' : r.previsto ? 'Deve sobrar no mês' : 'Sobrou no mês') + '</div><button class="olho" id="olho" aria-label="' + (oculto ? 'Mostrar valores' : 'Esconder valores') + '" aria-pressed="' + oculto + '">' + (oculto ? OLHO_FECHADO : OLHO) + '</button></div><div class="big num ' + (semRenda ? '' : r.sobra < 0 ? 'neg' : 'pos') + '">' + M(semRenda ? r.gastoTotal : r.sobra) + '</div><div class="sub">Entrou ' + M(r.entradasReais) + (r.previsto ? ' · vai cair ' + M(r.previsto) : '') + ' · saiu ' + M(r.gastoTotal) + ' · guardou ' + M(r.guardado) + '</div><div class="disp">💵 Disponível agora: <b class="num ' + (disp < 0 ? 'neg' : '') + '">' + M(disp) + '</b> <span class="sub">(já descontado o que foi pago)</span></div>';
   if (r.orcamento > 0) h += '<div class="meter"><div class="bar" role="progressbar" aria-valuenow="' + Math.round(pct * 100) + '" aria-valuemin="0" aria-valuemax="100"><div class="fill" style="width:' + Math.min(100, pct * 100) + '%;background:' + cor + '"></div></div><div class="legend"><span><b>' + Math.round(pct * 100) + '%</b> do orçamento usado</span><span>' + (r.orcamento - r.gastoTotal >= 0 ? 'Restam <b>' + M(r.orcamento - r.gastoTotal) + '</b>' : 'Passou <b>' + M(r.gastoTotal - r.orcamento) + '</b>') + '</span></div></div>';
   h += mood(r) + '</section>';
-  if (ehHoje && !(S.rendas || []).length && !S.demo) h += '<section class="card" style="background:var(--tile-in)"><div class="cardhead" style="margin:0"><div><h2 style="font-size:18px">💰 Sua renda entra sozinha</h2><div class="sub">Cadastre salário ou aposentadoria uma vez só.</div></div><button class="addbtn" data-novo="renda">Cadastrar</button></div></section>';
+  if (ehHoje && !(S.rendas || []).length && !S.demo && !S.perfil.guiaPassos) h += '<section class="card" style="background:var(--tile-in)"><div class="cardhead" style="margin:0"><div><h2 style="font-size:18px">💰 Sua renda entra sozinha</h2><div class="sub">Cadastre salário ou aposentadoria uma vez só.</div></div><button class="addbtn" data-novo="renda">Cadastrar</button></div></section>';
   h += '<section class="tiles" aria-label="Números do mês">' +
     '<button class="tile t-in" data-go="rendas"><span class="t">💰 Entrou</span><span class="v num">' + M(r.entradasReais) + '</span><span class="s">' + (r.previsto ? 'Vai cair ' + M(r.previsto).replace(',00', '') : r.lancamentos.filter((l) => l.tipo === 'entrada').length + ' rendas') + '</span></button>' +
     '<button class="tile t-out" data-go="gastos"><span class="t">🛒 Gastei</span><span class="v num">' + M(r.gastoTotal) + '</span><span class="s">Fixas ' + M(r.fixas).replace(',00','') + ' · dia a dia ' + M(r.gastosDia).replace(',00','') + '</span></button>' +
@@ -2070,13 +2088,13 @@ TELAS.ajustes = function(){
   h += '<section class="card"><h2 style="margin-bottom:10px">🏷️ Categorias e limites</h2><div class="sub" style="margin-bottom:8px">Toque para mudar o emoji, o nome ou colocar um limite mensal. Eu aviso quando passar.</div><div class="list">' + S.categorias.map((c, i) => '<button class="item" data-edit-cat="' + i + '"><span class="ico" style="background:' + soft(c.cor) + '">' + c.emoji + '</span><span class="mid"><span class="ttl">' + esc(c.nome) + '</span><span class="meta">' + (c.limite ? 'Limite ' + brl(c.limite) : 'Sem limite') + '</span></span></button>').join('') + '</div><button class="btn ghost block" style="margin-top:8px" data-novo="categoria">+ Nova categoria</button></section>';
   h += '<section class="card"><h2 style="margin-bottom:10px">💾 Meus dados no aparelho</h2><div class="btnrow"><button class="btn ghost" id="bk-exp">⬇️ Copiar backup</button><label class="btn ghost" for="bk-imp">⬆️ Importar backup</label><input id="bk-imp" type="file" accept=".json,application/json" hidden></div>' + (SERVER ? '' : '<div class="btnrow" style="margin-top:8px"><button class="btn ghost" id="bk-demo">🧪 Ver exemplo</button><button class="btn danger" id="bk-zero">🧹 Começar do zero</button></div>') + '<div id="bk-out"></div></section>';
   h += blocoConta();
-  h += '<p class="sub" style="text-align:center">Sonhaí · versão 1.9 (05/11) · feito com 💙 para ajudar famílias</p>';
+  h += '<p class="sub" style="text-align:center">Sonhaí · versão 1.10 (05/11) · feito com 💙 para ajudar famílias</p>';
   return h;
 };
 
 TELAS.mais = function(){
   const it = [['💳', 'Cartões', 'cartoes'], ['🧾', 'Contas', 'contas'], ['⭐', 'Sonhos', 'sonhos'], ['📈', 'Relatórios', 'relatorios'], ['🛍️', 'Parcelados', 'parcelados'], ['💳', 'Dívidas', 'dividas'], ['📌', 'Gastos do ano', 'anuais'], ['💰', 'Rendas', 'rendas'], ['💬', 'Mensagens', 'whatsapp'], ['⚙️', 'Ajustes', 'ajustes']].concat(conta && conta.admin ? [['👑', 'Painel master', 'master']] : []).filter((x) => x[2] !== 'entradas');
-  return '<section class="morelist">' + it.map((x) => '<button data-go="' + (x[2] === 'entradas' ? 'gastos' : x[2]) + '"' + (x[2] === 'entradas' ? ' data-aba="entradas"' : '') + '><span>' + x[0] + '</span><span>' + x[1] + '</span></button>').join('') + '</section><section class="card"><h2 style="font-size:18px;margin-bottom:6px">🎤 O que posso dizer?</h2><div class="sub" style="white-space:pre-line">' + esc(C.textoAjuda(S).split('\n').slice(3).join('\n')) + '</div></section>';
+  return '<section class="morelist">' + it.map((x) => '<button data-go="' + (x[2] === 'entradas' ? 'gastos' : x[2]) + '"' + (x[2] === 'entradas' ? ' data-aba="entradas"' : '') + '><span>' + x[0] + '</span><span>' + x[1] + '</span></button>').join('') + '<button data-guia><span>❓</span><span>Como usar</span></button></section><section class="card"><h2 style="font-size:18px;margin-bottom:6px">🎤 O que posso dizer?</h2><div class="sub" style="white-space:pre-line">' + esc(C.textoAjuda(S).split('\n').slice(3).join('\n')) + '</div></section>';
 };
 
 const TITULOS = { rendas: 'Rendas', master: 'Painel master', cartoes: 'Cartões', inicio: '', gastos: 'Lançamentos', contas: 'Contas', parcelados: 'Parcelados', agenda: 'Agenda', sonhos: 'Sonhos', relatorios: 'Relatórios', dividas: 'Dívidas', anuais: 'Gastos do ano', whatsapp: 'Mensagens', ajustes: 'Ajustes', mais: 'Mais opções' };
@@ -2090,18 +2108,122 @@ function render(){
   h += t === 'inicio' ? '<div class="hello">' + saudacao() + '<b>' + esc(nome || 'Que bom te ver!') + ' 👋</b></div>' : '<div class="hello comvoltar"><button class="voltar" id="voltar" aria-label="Voltar">‹</button><b>' + esc(TITULOS[t] || '') + '</b></div>';
   h += '</header>';
   if (S.demo && !SERVER) h += '<div class="demo" role="note"><span>🧪 Você está vendo dados de exemplo.</span><button id="sair-demo">Começar o meu</button></div>';
-  h += '<main class="content wrap">' + (t === 'inicio' ? avisoPlano() + avisoVerificar() + avisoLembretes() + palavraDoDia() : '') + (TELAS[t] || TELAS.inicio)() + '</main>';
+  h += '<main class="content wrap">' + (t === 'inicio' ? avisoPlano() + avisoVerificar() + avisoLembretes() + (view.ym === C.mesDe(hojeISO()) ? passosHTML() : '') + palavraDoDia() : '') + (TELAS[t] || TELAS.inicio)() + '</main>';
   $('#app').innerHTML = h;
   const navs = [['inicio', '🏠', 'Início'], ['gastos', '📋', 'Gastos'], ['mic'], ['agenda', '📌', 'Agenda'], ['mais', '☰', 'Mais']];
   $('#nav').innerHTML = navs.map((n) => n[0] === 'mic' ? '<div class="micwrap"><button class="mic" id="fab" aria-label="Falar um gasto">🎤</button><small>Falar</small></div>' : '<button class="' + (t === n[0] || (n[0] === 'mais' && !['inicio', 'gastos', 'agenda'].includes(t)) ? 'on' : '') + '" data-go="' + n[0] + '"><span class="i">' + n[1] + '</span>' + n[2] + '</button>').join('');
   bind();
   const wa = $('#wa'); if (wa) wa.scrollTop = wa.scrollHeight;
+  if (guia) guiaPosicionar();
+  passosConferir();
 }
 const OLHO = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
 const OLHO_FECHADO = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.1M6.1 6.1C3.6 7.8 2 12 2 12s3.6 7 10 7a9.9 9.9 0 0 0 5.9-1.9"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>';
 const LOGO = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 21.5s-7.8-4.7-9.7-9.6C.9 8.3 3.2 4.3 7 4.3c2.1 0 3.5 1.1 5 3 1.5-1.9 2.9-3 5-3 3.8 0 6.1 4 4.7 7.6-1.9 4.9-9.7 9.6-9.7 9.6z" fill="#1B3A6B"/><text x="12" y="16.2" text-anchor="middle" font-family="Arial Black,Arial,sans-serif" font-weight="900" font-size="10.5" fill="#FFC83D">$</text></svg>';
 function saudacao(){ const h = hoje().getHours(); return h < 12 ? 'Bom dia,' : h < 18 ? 'Boa tarde,' : 'Boa noite,'; }
 function aplicarTema(){ const t = S.perfil.tema; if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); else if (S.perfil.temaAplicado) document.documentElement.removeAttribute('data-theme'); S.perfil.temaAplicado = t; }
+
+// ------------------------------------------------------------ primeiro acesso
+/** O que a pessoa precisa fazer para o app funcionar para ela. Cada item se marca sozinho. */
+function passosLista(){
+  const L = S.lancamentos || [];
+  const sonho = (S.sonhos || []).some((s) => s.custo > 0 || (s.aportes || []).length || !/reserva de emerg/i.test(C.sem(s.nome)));
+  const lista = [
+    { k: 'renda', t: 'Cadastrar minha renda', s: 'Ela entra sozinha todo mês', ok: (S.rendas || []).length > 0 || L.some((l) => l.tipo === 'entrada') },
+    { k: 'conta', t: 'Cadastrar as contas fixas', s: 'Luz, água, internet, aluguel', ok: (S.contas || []).length > 0 },
+    { k: 'cartao', t: 'Cadastrar cartões e Ticket', s: 'Crédito, alimentação ou refeição', ok: (S.cartoes || []).length > 0 || (S.tickets || []).length > 0 },
+    { k: 'orcamento', t: 'Definir o orçamento do mês', s: 'Eu aviso antes de estourar', ok: S.perfil.orcamento > 0 },
+    { k: 'gasto', t: 'Lançar o primeiro gasto', s: 'Toque e fale: gastei 50 no mercado', ok: L.some((l) => l.tipo === 'gasto') },
+    { k: 'sonho', t: 'Criar o primeiro sonho', s: 'Viagem, carro, casa própria', ok: sonho }
+  ];
+  if (SERVER && conta && (cfg.telegram || !cfg.demo)) lista.push({ k: 'lembrete', t: 'Ativar os lembretes', s: 'Contas e compromissos no celular', ok: !!conta.canal });
+  return lista;
+}
+function passosHTML(){
+  if (!S.perfil.guiaPassos || S.demo) return '';
+  const l = passosLista(); const feitos = l.filter((x) => x.ok).length;
+  return '<section class="card" aria-label="Primeiros passos"><div class="cardhead" style="margin-bottom:8px"><h2>🚀 Primeiros passos</h2><span class="sub num"><b>' + feitos + '</b> de ' + l.length + '</span></div><div class="pbar"><i style="width:' + (feitos / l.length * 100) + '%"></i></div><div class="list" style="margin-top:8px">' + l.map((x) => '<button class="item" data-passo="' + x.k + '"><span class="check' + (x.ok ? ' on' : '') + '" aria-hidden="true">' + (x.ok ? '✓' : '') + '</span><span class="mid"><span class="ttl"' + (x.ok ? ' style="text-decoration:line-through;color:var(--ink-2)"' : '') + '>' + esc(x.t) + '</span><span class="meta">' + (x.ok ? 'Feito' : esc(x.s)) + '</span></span><span class="val" aria-hidden="true">›</span></button>').join('') + '</div><button class="link" data-passos-fim>Ocultar esta lista</button></section>';
+}
+function passosConferir(){
+  if (!S.perfil.guiaPassos || S.demo || guia || (SERVER && !conta) || !passosLista().every((x) => x.ok)) return;
+  S.perfil.guiaPassos = false; S.perfilUpd = Date.now();
+  setTimeout(() => { save(); confete(); toast('🏆 Primeiros passos concluídos! Agora é só seguir. 💙'); }, 300);
+}
+let guia = null;
+function guiaPassos(){
+  const nome = (S.perfil.nome || '').split(' ')[0];
+  return [
+    { t: 'Oi' + (nome ? ', ' + nome : '') + '! 👋', x: 'Vou te mostrar onde fica cada coisa. Leva 1 minutinho.', bt: 'Vamos lá' },
+    { tela: 'inicio', alvo: '.hero', t: '📊 Seu resumo do mês', x: 'Aqui você vê quanto entrou, quanto saiu e quanto sobrou.' },
+    { tela: 'inicio', alvo: '#fab', onde: 'Botão do meio, embaixo', t: '🎤 Fale o que gastou', x: 'Toque aqui e diga: "gastei 50 no mercado". Eu anoto e separo por categoria. Se preferir, dá para escrever.' },
+    { tela: 'gastos', alvo: '[data-novo="gasto"]', onde: 'Gastos', t: '🛒 Gastos do dia a dia', x: 'Prefere digitar? Toque em + Adicionar. Todos os gastos do mês ficam nesta tela.' },
+    { tela: 'mais', alvo: '#nav [data-go="mais"]', onde: 'Último botão, embaixo', t: '☰ Mais opções', x: 'Renda, contas, cartões, sonhos, parcelados, dívidas, relatórios e ajustes ficam aqui.' },
+    { tela: 'rendas', alvo: '[data-novo="renda"]', onde: 'Mais › Rendas', t: '💰 Sua renda', x: 'Cadastre seu salário uma vez só. Ele entra sozinho todo mês.' },
+    { tela: 'contas', alvo: '[data-novo="conta"]', onde: 'Mais › Contas', t: '🧾 Contas fixas', x: 'Luz, água, internet, aluguel. Eu lembro 1 dia antes e no dia do vencimento.' },
+    { tela: 'cartoes', alvo: '[data-novo="cartao"]', onde: 'Mais › Cartões', t: '💳 Cartões de crédito', x: 'Cadastre seus cartões. Cada compra vai para a fatura certa.' },
+    { tela: 'cartoes', alvo: '.ccard.tk', onde: 'Mais › Cartões', t: '🎟️ Ticket Alimentação/Refeição', x: 'Coloque o crédito em + Crédito. A cada compra, o saldo diminui.', se: () => ticketsTela().length > 0 },
+    { tela: 'agenda', alvo: '[data-novo="compromisso"]', onde: 'Agenda', t: '📌 Compromissos', x: 'Anote consultas e reuniões. Eu lembro no dia e 1 hora antes.' },
+    { tela: 'sonhos', alvo: '[data-novo="sonho"]', onde: 'Mais › Sonhos', t: '⭐ Seus sonhos', x: 'Crie um sonho com valor e prazo. Eu mostro quanto guardar por mês.' },
+    { tela: 'ajustes', alvo: '#aj-orc', onde: 'Mais › Ajustes', t: '🎯 Orçamento do mês', x: 'Defina quanto pode gastar por mês. Eu aviso antes de estourar.' },
+    { tela: 'whatsapp', alvo: '#tg-on, #tg-off, #wa-num', onde: 'Mais › Mensagens', t: '🔔 Lembretes', x: 'Conecte aqui para lançar gastos por mensagem e receber os lembretes no celular.', se: () => SERVER },
+    { tela: 'inicio', t: 'Prontinho! 🎉', x: (S.perfil.guiaPassos ? 'Na tela inicial, deixei uma lista com os seus primeiros passos. ' : '') + 'Para ver este guia de novo, toque em Mais › Como usar.', bt: 'Começar' }
+  ].filter((p) => !p.se || p.se());
+}
+function guiaComecar(){
+  if (guia) return;
+  if (sheetAberta) fechar();
+  guia = { i: 0, passos: guiaPassos() };
+  try { history.pushState({ g: 1 }, '', location.hash || '#' + view.tela); } catch(e){}
+  const d = document.createElement('div'); d.id = 'gui'; d.className = 'gui';
+  d.innerHTML = '<div class="gui-luz sem" id="gui-luz"></div><div class="gui-box" id="gui-box" role="dialog" aria-modal="true" aria-label="Guia do Sonhaí"></div>';
+  document.body.appendChild(d);
+  guiaIr(0);
+}
+function guiaIr(i){
+  if (!guia || i < 0) return;
+  if (i >= guia.passos.length) return guiaFim();
+  guia.i = i; const p = guia.passos[i]; const ultimo = i === guia.passos.length - 1;
+  if (p.tela && view.tela !== p.tela) { view.tela = p.tela; render(); }
+  const box = $('#gui-box');
+  box.innerHTML = '<div class="gui-topo"><span class="num">' + (i + 1) + ' de ' + guia.passos.length + '</span>' + (ultimo ? '' : '<button class="link" id="gui-x" type="button">Pular</button>') + '</div><div class="gui-barra"><i style="width:' + ((i + 1) / guia.passos.length * 100) + '%"></i></div><h3>' + esc(p.t) + '</h3>' + (p.onde ? '<span class="chip info">📍 ' + esc(p.onde) + '</span>' : '') + '<p>' + esc(p.x) + '</p><div class="btnrow">' + (i ? '<button class="btn ghost" id="gui-v" type="button">Voltar</button>' : '') + '<button class="btn pri" id="gui-ok" type="button">' + esc(p.bt || 'Próximo') + '</button></div>';
+  $('#gui-ok').onclick = () => guiaIr(i + 1);
+  const v = $('#gui-v'); if (v) v.onclick = () => guiaIr(i - 1);
+  const x = $('#gui-x'); if (x) x.onclick = guiaFim;
+  const alvo = p.alvo && document.querySelector(p.alvo);
+  if (!alvo) scrollTo(0, 0);
+  else if (!alvo.closest('.nav')) {
+    alvo.scrollIntoView({ block: 'center' });
+    const r = alvo.getBoundingClientRect(), alto = box.offsetHeight;
+    if (r.bottom + 18 + alto > window.innerHeight - 12 && r.top - 18 - alto < 12) window.scrollBy(0, r.top - 18); // tela baixa: sobe o alvo para caber o texto embaixo
+  }
+  guiaPosicionar();
+  $('#gui-ok').focus({ preventScroll: true });
+}
+function guiaPosicionar(){
+  const luz = $('#gui-luz'), box = $('#gui-box'); if (!guia || !luz) return;
+  const p = guia.passos[guia.i]; const alvo = p.alvo && document.querySelector(p.alvo);
+  const alto = box.offsetHeight, H = window.innerHeight, folga = 6, m = 12;
+  if (!alvo) { luz.className = 'gui-luz sem'; luz.removeAttribute('style'); box.style.top = Math.max(m, (H - alto) / 2) + 'px'; return; }
+  const r = alvo.getBoundingClientRect();
+  luz.className = 'gui-luz'; luz.style.left = r.left - folga + 'px'; luz.style.top = r.top - folga + 'px'; luz.style.width = r.width + folga * 2 + 'px'; luz.style.height = r.height + folga * 2 + 'px';
+  const abaixo = r.bottom + folga + m, acima = r.top - folga - m - alto;
+  box.style.top = (abaixo + alto <= H - m ? abaixo : acima >= m ? acima : Math.max(m, H - alto - m)) + 'px';
+}
+function guiaFim(){
+  if (!guia) return;
+  guia = null; const d = $('#gui'); if (d) d.remove();
+  if (S.perfil.guiaTour) { S.perfil.guiaTour = false; S.perfilUpd = Date.now(); }
+  view.tela = 'inicio'; profundidade = 0;
+  try { history.replaceState(null, '', '#inicio'); } catch(e){}
+  save(); scrollTo(0, 0);
+}
+function guiaSePendente(){
+  if (!S.perfil.guiaTour || S.demo) return;
+  setTimeout(() => { if (S.perfil.guiaTour && !S.demo && !sheetAberta) guiaComecar(); }, 400); // espera os avisos da entrada
+}
+window.addEventListener('resize', () => guiaPosicionar());
+window.addEventListener('scroll', () => guiaPosicionar(), { passive: true });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') guiaFim(); });
 
 // ------------------------------------------------------------ eventos
 function bind(){
@@ -2116,6 +2238,9 @@ function bind(){
   A.querySelectorAll('[data-pagparc]').forEach((b) => b.onclick = (e) => { e.stopPropagation(); const p = S.parcelados.find((x) => x.id === b.dataset.pagparc); const ym = b.dataset.ym; p.pagos = p.pagos || {}; p.pagos[ym] = !p.pagos[ym]; p.upd = Date.now(); save(); toast(p.pagos[ym] ? '✅ Parcela de ' + p.desc + ' paga' : 'Parcela marcada como não paga'); });
   A.querySelectorAll('[data-pagfat]').forEach((b) => b.onclick = (e) => { e.stopPropagation(); formPagarFatura(b.dataset.pagfat, b.dataset.ym); });
   A.querySelectorAll('[data-cartao]').forEach((b) => b.onclick = () => go('cartoes'));
+  A.querySelectorAll('[data-guia]').forEach((b) => b.onclick = guiaComecar);
+  A.querySelectorAll('[data-passo]').forEach((b) => b.onclick = () => ({ renda: () => formRenda(), conta: () => formConta(), cartao: () => go('cartoes'), orcamento: () => go('ajustes'), gasto: abrirVoz, sonho: () => formSonho(), lembrete: () => go('whatsapp') })[b.dataset.passo]());
+  A.querySelectorAll('[data-passos-fim]').forEach((b) => b.onclick = () => { S.perfil.guiaPassos = false; S.perfilUpd = Date.now(); save(); toast('Tudo bem! O guia continua em Mais › Como usar.'); });
   A.querySelectorAll('[data-ticket]').forEach((b) => b.onclick = () => go('cartoes'));
   A.querySelectorAll('[data-tk-credito]').forEach((b) => b.onclick = () => formCredito(ticketDe(b.dataset.tkCredito)));
   A.querySelectorAll('[data-tk-compra]').forEach((b) => b.onclick = () => formLanc(null, 'gasto', { ticket: b.dataset.tkCompra }));
@@ -2422,7 +2547,7 @@ function conversar(t){
 function onboarding(){
   const L = $('#layer');
   L.innerHTML = '<div class="ob" role="dialog" aria-modal="true"><div class="box"><span class="logo" style="width:64px;height:64px;border-radius:20px;background:var(--sun);display:grid;place-items:center">' + LOGO.replace(/22/g, '38') + '</span><h1>Sonhaí</h1><p>Seu dinheiro organizado de um jeito leve. Fale o gasto, eu anoto. Eu lembro das contas e ajudo você a realizar sonhos. 💙</p><div class="feat"><div><span>🎤</span>Lance gastos falando</div><div><span>💬</span>Lembretes no WhatsApp</div><div><span>⭐</span>Metas para os seus sonhos</div></div><input id="ob-n" placeholder="Seu nome ou da família" aria-label="Seu nome"><input id="ob-o" inputmode="decimal" placeholder="Quanto pode gastar por mês? (opcional)" aria-label="Orçamento mensal"><input id="ob-w" inputmode="tel" placeholder="Seu WhatsApp com DDD (opcional)" aria-label="WhatsApp"><button class="btn sun block" id="ob-ok" style="font-size:18px">Começar ✨</button><button class="btn block" id="ob-ex" style="background:rgba(255,255,255,.14);color:inherit">Ver primeiro com dados de exemplo</button></div></div>';
-  $('#ob-ok').onclick = () => { const n = $('#ob-n').value.trim(); if (!n) { $('#ob-n').focus(); return; } const novo = C.estadoVazio(); novo.perfil.nome = n; novo.perfil.orcamento = num($('#ob-o').value); novo.perfil.whatsapp = $('#ob-w').value.trim(); novo.perfilUpd = Date.now(); S = novo; L.innerHTML = ''; save(); confete(); toast('🎉 Bem-vindo(a), ' + n.split(' ')[0] + '! Toque no 🎤 para lançar seu primeiro gasto.'); };
+  $('#ob-ok').onclick = () => { const n = $('#ob-n').value.trim(); if (!n) { $('#ob-n').focus(); return; } const novo = C.marcarPrimeiroAcesso(C.estadoVazio()); novo.perfil.nome = n; novo.perfil.orcamento = num($('#ob-o').value); novo.perfil.whatsapp = $('#ob-w').value.trim(); S = novo; L.innerHTML = ''; save(); confete(); guiaSePendente(); };
   $('#ob-ex').onclick = () => { S = exemplo(); L.innerHTML = ''; save(); };
 }
 
@@ -2461,7 +2586,7 @@ function telaEntrar(modo){
       token = j.token; codReset = ''; try { localStorage.setItem('cc-token', token); } catch(x){}
       if (modo !== 'criar') { S = C.estadoVazio(); S.sonhos = []; store.set(S); }
       L.innerHTML = ''; await iniciarConta(true);
-      if (modo === 'criar') { confete(); toast('🎉 Conta criada! Bem-vindo(a) ao Sonhaí.'); } else toast('💙 Que bom te ver!');
+      if (modo === 'criar') { confete(); if (!S.perfil.guiaTour) toast('🎉 Conta criada! Bem-vindo(a) ao Sonhaí.'); } else toast('💙 Que bom te ver!');
     } catch(err) { erro(err.message); bt.disabled = false; bt.textContent = ({ entrar: 'Entrar', criar: 'Criar minha conta ✨', reset: 'Salvar nova senha' })[modo]; }
   };
 }
@@ -2484,14 +2609,20 @@ async function iniciarConta(primeira){
   await pull();
   if (primeira) { setInterval(pull, 30000); document.addEventListener('visibilitychange', () => { if (!document.hidden) pull(); }); }
   render();
-  if (!conta.temSenha) formSenha(true);
-  else if (conta.trocarSenha) formSenha(false, true);
-  else if (!conta.aceite) formAceite();
+  proximoAcesso();
+}
+/** O que falta na entrada, nesta ordem: senha, termos e o guia. Uma folha troca pela outra sem fechar. */
+function proximoAcesso(){
+  if (!conta.temSenha) return formSenha(true);
+  if (conta.trocarSenha) return formSenha(false, true);
+  if (!conta.aceite) return formAceite();
+  if (sheetAberta) fechar();
+  guiaSePendente();
 }
 function formSenha(criar, obrigatoria){
   sheet('<h3>🔐 ' + (criar ? 'Crie sua senha' : obrigatoria ? 'Crie sua senha pessoal' : 'Trocar senha') + '</h3>' + (criar ? '<p class="sub">Assim você entra no Sonhaí em qualquer aparelho com seu WhatsApp e senha.</p>' : obrigatoria ? '<p class="sub">Por segurança, troque a senha inicial que você recebeu por uma só sua.</p>' : '') + '<form id="fsn">' + (criar ? '' : '<div class="field"><label for="sn-a">Senha atual</label><input id="sn-a" type="password" autocomplete="current-password"></div>') + '<div class="field"><label for="sn-n">Nova senha</label><input id="sn-n" type="password" autocomplete="new-password" placeholder="mín. 8, com letras e números"></div><div class="field"><label for="sn-n2">Repita a nova senha</label><input id="sn-n2" type="password" autocomplete="new-password"></div><div class="note" id="sn-e" hidden style="color:var(--bad)"></div><button class="btn pri block" type="submit">Salvar senha</button></form>', () => {
     if (obrigatoria && $('#sn-a')) { $('#sn-a').closest('.field').querySelector('label').textContent = 'Senha inicial (a que você recebeu)'; }
-    $('#fsn').onsubmit = async (e) => { e.preventDefault(); const er = $('#sn-e'); er.hidden = true; if ($('#sn-n').value !== $('#sn-n2').value) { er.textContent = 'As senhas não são iguais.'; er.hidden = false; return; } try { await api('/api/senha', { atual: $('#sn-a') ? $('#sn-a').value : '', nova: $('#sn-n').value }); conta.temSenha = true; conta.trocarSenha = false; fechar(); toast('🔐 Senha salva!'); if (!conta.aceite) formAceite(); } catch(x){ er.textContent = x.message; er.hidden = false; } };
+    $('#fsn').onsubmit = async (e) => { e.preventDefault(); const er = $('#sn-e'); er.hidden = true; if ($('#sn-n').value !== $('#sn-n2').value) { er.textContent = 'As senhas não são iguais.'; er.hidden = false; return; } try { await api('/api/senha', { atual: $('#sn-a') ? $('#sn-a').value : '', nova: $('#sn-n').value }); conta.temSenha = true; conta.trocarSenha = false; toast('🔐 Senha salva!'); proximoAcesso(); } catch(x){ er.textContent = x.message; er.hidden = false; } };
   }, { fixa: !!(obrigatoria || criar) });
 }
 async function sair(todos){ try { await api('/api/sair', { todos: !!todos }); } catch(e){} sairLocal(); }
@@ -2518,7 +2649,7 @@ function formExcluirConta(){
 }
 function formAceite(){
   sheet('<h3>📄 Termos e Privacidade</h3><p>Para continuar, leia e aceite os <a href="/termos.html" target="_blank" rel="noopener">Termos de Uso</a> e a <a href="/privacidade.html" target="_blank" rel="noopener">Política de Privacidade</a> do Sonhaí.</p><button class="btn pri block" id="ace-ok">Li e aceito</button>', () => {
-    $('#ace-ok').onclick = async () => { try { await api('/api/aceite', {}); conta.aceite = true; fechar(); } catch(x){ toast(x.message); } };
+    $('#ace-ok').onclick = async () => { try { await api('/api/aceite', {}); conta.aceite = true; proximoAcesso(); } catch(x){ toast(x.message); } };
   }, { fixa: true });
 }
 /** Acesso vencido: a pessoa ainda entra para renovar, baixar ou excluir os dados. */
@@ -2544,7 +2675,7 @@ function avisoPlano(){
   return '<section class="card" style="background:var(--tile-out)"><h2 style="font-size:18px">⏳ Seu acesso vence ' + (conta.dias <= 0 ? 'hoje' : 'em ' + conta.dias + (conta.dias === 1 ? ' dia' : ' dias')) + '</h2><p style="margin:8px 0">Plano ' + esc(conta.planoNome) + ' até ' + C.dataBR(conta.validade) + '. Renove para continuar usando o Sonhaí sem interrupção.</p>' + (sup ? '<a class="btn sun block" href="https://wa.me/' + sup + '?text=' + encodeURIComponent('Olá! Quero renovar meu acesso ao Sonhaí.') + '" target="_blank" rel="noopener">💬 Renovar pelo WhatsApp</a>' : '') + '</section>';
 }
 function avisoLembretes(){
-  if (!SERVER || !conta || conta.canal || conta.expirado || !cfg.telegram) return '';
+  if (!SERVER || !conta || conta.canal || conta.expirado || !cfg.telegram || S.perfil.guiaPassos) return '';
   return '<section class="card" style="background:var(--tile-dream)"><h2 style="font-size:18px">🔔 Ative seus lembretes</h2><p style="margin:8px 0">Conecte o Telegram para receber as contas e os compromissos no celular, sem custo.</p><button class="btn sun block" data-go="whatsapp">Ativar agora</button></section>';
 }
 function avisoVerificar(){
@@ -2555,7 +2686,7 @@ function avisoVerificar(){
 
 // ------------------------------------------------------------ início
 const h0 = (location.hash || '').slice(1); if (TELAS[h0]) view.tela = h0;
-window.addEventListener('popstate', () => { if (ignorarPop) { ignorarPop = false; return; } if (sheetAberta) { if (sheetFixa) { try { history.pushState({ s: 1 }, '', location.hash); } catch(e){} return; } fechar(true); return; } profundidade = Math.max(0, profundidade - 1); const x = location.hash.slice(1) || 'inicio'; if (TELAS[x] && x !== view.tela) { fechar(); view.tela = x; render(); scrollTo(0, 0); } });
+window.addEventListener('popstate', () => { if (ignorarPop) { ignorarPop = false; return; } if (guia) { try { history.pushState({ g: 1 }, '', location.hash); } catch(e){} guiaIr(guia.i - 1); return; } if (sheetAberta) { if (sheetFixa) { try { history.pushState({ s: 1 }, '', location.hash); } catch(e){} return; } fechar(true); return; } profundidade = Math.max(0, profundidade - 1); const x = location.hash.slice(1) || 'inicio'; if (TELAS[x] && x !== view.tela) { fechar(); view.tela = x; render(); scrollTo(0, 0); } });
 window.addEventListener('hashchange', () => { const x = location.hash.slice(1); if (TELAS[x] && x !== view.tela) { view.tela = x; render(); } });
 render();
 if (SERVER) {

@@ -211,7 +211,7 @@ function usuario(fone, criar) {
   const k = chaveFone(fone);
   let u = DB.usuarios[k];
   if (!u && criar) {
-    u = DB.usuarios[k] = { fone: normFone(fone), estado: CC.estadoVazio(), rev: 1, enviados: {}, ultimaMsg: 0, criadoEm: Date.now(), verificado: true };
+    u = DB.usuarios[k] = { fone: normFone(fone), estado: CC.marcarPrimeiroAcesso(CC.estadoVazio()), rev: 1, enviados: {}, ultimaMsg: 0, criadoEm: Date.now(), verificado: true };
     u.estado.perfil.whatsapp = normFone(fone);
     salvarDB();
   }

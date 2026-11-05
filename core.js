@@ -663,6 +663,12 @@
     };
   }
 
+  /** Conta nova: o app mostra o guia e os primeiros passos. Contas antigas não têm essas marcas. */
+  function marcarPrimeiroAcesso(estado) {
+    estado.perfil.guiaTour = true; estado.perfil.guiaPassos = true; estado.perfilUpd = Date.now();
+    return estado;
+  }
+
   // ------------------------------------------------------------- aplicar ação
   /** Aplica a ação interpretada ao estado. Retorna { ok, msg, item, colecao }. */
   // ------------------------------------------------------------------ limites
@@ -1305,7 +1311,7 @@
     CATEGORIAS, TIPOS_ENTRADA, INCENTIVOS, MESES, sem, uid, iso, pad, brl, dataBR, mesDe, nomeMes, mesCurto, somaMes, difMeses, diasNoMes, agora,
     VERSICULOS, versiculoDoDia, LIMITE_VALOR, LIMITE_TEXTO, sanearEstado, BANCOS, detectarCartao, garantirCartao, mesFatura, diaFechamento, vencFatura, fatura, pagarFatura, faturasAVencer, faturaDaVez, rotuloFatura,
     NOME_TICKET, COR_TICKET, detectarTicket, garantirTicket, saldoTicket, gastoTicketMes, extratoTicket, excluirTicket,
-    conversar, interpretar, aplicar, remover, acharExclusao, descreverAlvo, valorConta, definirValorConta, encerrarConta, garantirRendas, acharSonho, retirarDoSonho, estadoVazio, resumoMes, mesesComDados, parcelaNoMes, contaNoMes, contasAVencer, contasAtrasadas, totalSonho,
+    conversar, interpretar, aplicar, remover, acharExclusao, descreverAlvo, valorConta, definirValorConta, encerrarConta, garantirRendas, acharSonho, retirarDoSonho, estadoVazio, marcarPrimeiroAcesso, resumoMes, mesesComDados, parcelaNoMes, contaNoMes, contasAVencer, contasAtrasadas, totalSonho,
     textoResumo, textoContas, textoAgenda, textoAjuda, mensagemHumor, barra, mesclar, adivinharCategoria, extrairValor, extrairData, extrairHora
   };
 });
