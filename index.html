@@ -260,6 +260,13 @@ h1,h2,h3{font-family:var(--f-display);line-height:1.1;margin:0;text-wrap:balance
 .ccard .lim i{display:block;height:100%;background:#fff}
 .cards{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(220px,78%);gap:10px;overflow-x:auto;scroll-snap-type:x mandatory;padding-bottom:4px}
 .cards .ccard{scroll-snap-align:start}
+.tkarea{border:0;background:none;color:inherit;padding:0;text-align:left;display:grid;gap:8px;width:100%;min-width:0;position:relative;z-index:1}
+.tkarea .row1{align-items:flex-start}
+.ccard .nm.tk{font-size:18px;min-width:0;overflow-wrap:anywhere}
+.tkico{font-size:24px;line-height:1;flex:none}
+.tkbtns{display:flex;gap:8px;position:relative;z-index:1}
+.tkbtns button{flex:1;min-width:0;min-height:44px;border:0;border-radius:12px;padding:8px 6px;font-weight:800;font-size:14px;background:rgba(255,255,255,.95);color:#13233A;white-space:nowrap}
+.tkbtns button.sec{background:rgba(0,0,0,.24);color:#fff}
 .cdot{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:4px;vertical-align:baseline}
 canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
 @media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
@@ -555,7 +562,7 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
       }
     }
     delete estado.pendente;
-    const acao = interpretar(texto, { hoje, categorias: estado.categorias, sonhos: estado.sonhos, cartoes: estado.cartoes });
+    const acao = interpretar(texto, { hoje, categorias: estado.categorias, sonhos: estado.sonhos, cartoes: estado.cartoes, tickets: estado.tickets });
     if (acao.tipo === 'excluir') {
       const alvo = acharExclusao(estado, acao);
       if (!alvo.item) return { ok: false, msg: alvo.msg, acao };
@@ -680,11 +687,77 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
     return ym0;
   }
 
+  // ------------------------------------------------------- ticket (saldo pré-pago)
+  // O crédito entra em estado.recargas e as compras são lançamentos com ticketId.
+  // O saldo é sempre calculado, então celular e WhatsApp nunca brigam por um número.
+  const TICKET_PADRAO = 'ticket-padrao';
+  const NOME_TICKET = 'Ticket Alimentação/Refeição';
+  const COR_TICKET = '#0B7A54';
+  const NAO_BENEFICIO = '(?!\\s+(?:d[oae]s?\\s+)?(?:estacionamento|show|cinema|onibus|metro|trem|pedagio|medio|teatro|jogo|evento|festa|estadio|parque|suporte|atendimento|embarque|aviao|voo|sorteio|bar)\\b)';
+  const COMPLEMENTO_TICKET = '(?:[ /-]+(?:de\\s+)?(?:alimentacao|refeicao)){0,2}';
+  const RE_TICKET = new RegExp('\\b(?:vales?[ -](?:alimentacao|refeicao|ticket|mercado)' + COMPLEMENTO_TICKET + '|cartao[ -](?:de\\s+)?(?:alimentacao|refeicao|ticket|beneficios?)' + COMPLEMENTO_TICKET + '|(?:ticket|tiquete|tiket)s?' + COMPLEMENTO_TICKET + NAO_BENEFICIO + '|alelo|sodexo|pluxee|swile)\\b');
+  const RE_VA_VR = /\b(?:no|na|do|da|de|com|pelo|pela|usando)\s+(?:o\s+|a\s+|meu\s+|minha\s+)?(va|vr)\b/;
+  const COMPRA_TICKET = /\b(gastei|gastamos|gasto|gastar|comprei|compramos|compra|comprar|paguei|pagamos|pagar|despesa|torrei|debitou|saiu|almocei|jantei)\b/;
+  const CREDITO_FORTE = /\b(recarreguei|recarregar|recarrega|recarregue|recarga|carreguei|carregar|carrega|carregue|recebi|recebemos|caiu|cairam|entrou|depositaram|depositei|depositar|creditaram|creditou|creditei|creditar|credite|pingou|veio|vieram|estornou|estornaram|devolveram|devolveu)\b/;
+  const CREDITO_FRACO = /\b(credito|coloquei|colocar|coloca|coloque|botei|botar|bota|adicionei|adicionar|adiciona|adicione|acrescentei|acrescenta|somei)\b/;
+  const PALAVRAS_CREDITO = ['recarreguei', 'recarregar', 'recarrega', 'recarregue', 'recarga', 'carreguei', 'carregar', 'carrega', 'carregue', 'colocar', 'coloca', 'coloque', 'adicionei', 'acrescentei', 'acrescenta', 'somei', 'saldo', 'no valor'];
+  const escRe = (x) => String(x).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  /** Acha o cartão de benefício citado: "no ticket", "vale refeição", "no va", "no alelo" ou o nome cadastrado. */
+  function detectarTicket(t, tickets) {
+    tickets = tickets || [];
+    const marca = t.match(RE_TICKET);
+    const sigla = marca ? null : t.match(RE_VA_VR);
+    const tt = ' ' + t.replace(/\bva\b/g, 'alimentacao').replace(/\bvr\b/g, 'refeicao').replace(/[/-]/g, ' ') + ' ';
+    let melhor = null, tam = 0, trecho = '';
+    for (const c of tickets) {
+      const n = sem(c.nome);
+      const partes = [n].concat(n.split(/[\s/-]+/).filter((p) => p.length > 2 && !['ticket', 'tiquete', 'cartao', 'vale', 'beneficio', 'beneficios'].includes(p)));
+      for (const p of partes) {
+        // nome próprio ("Caju") só conta depois de "no", "com", "do"...: "comprei caju" não é o cartão
+        const achou = marca || sigla ? tt.includes(' ' + p + ' ') : !/^(alimentacao|refeicao)$/.test(p) && new RegExp('\\b(?:no|na|do|da|com|pelo|pela|usando)\\s+(?:o\\s+|a\\s+|meu\\s+|minha\\s+)?(?:cartao\\s+)?' + escRe(p) + '\\b').test(t);
+        if (achou && p.length > tam) { melhor = c; tam = p.length; trecho = p; }
+      }
+    }
+    if (!marca && !sigla && !melhor) return null;
+    trecho = marca ? marca[0] : sigla ? sigla[1] : trecho;
+    if (melhor) return { id: melhor.id, nome: melhor.nome, trecho };
+    if (tickets.length) return { id: tickets[0].id, nome: tickets[0].nome, trecho, generico: tickets.length > 1 };
+    return { novo: true, nome: NOME_TICKET, trecho };
+  }
+  /** Devolve o ticket citado; o primeiro tem id fixo para não duplicar quando dois aparelhos o criam. */
+  function garantirTicket(estado, info) {
+    estado.tickets = estado.tickets || [];
+    if (info && info.id) return estado.tickets.find((c) => c.id === info.id) || null;
+    if (!info || !info.nome || info.nome === NOME_TICKET) { const ja = estado.tickets[0]; if (ja) return ja; }
+    const usado = estado.tickets.some((c) => c.id === TICKET_PADRAO) || (estado.excluidos || []).some((x) => x.id === TICKET_PADRAO);
+    const c = { id: usado ? uid() : TICKET_PADRAO, nome: (info && info.nome) || NOME_TICKET, cor: (info && info.cor) || COR_TICKET, upd: Date.now() };
+    estado.tickets.push(c);
+    return c;
+  }
+  const centavos = (v) => Math.round(v * 100) / 100;
+  const somaValor = (lista) => lista.reduce((a, b) => a + (Number(b.valor) || 0), 0);
+  const recargasDe = (estado, id) => (estado.recargas || []).filter((r) => r.ticketId === id);
+  const comprasTicket = (estado, id) => (estado.lancamentos || []).filter((l) => l.tipo === 'gasto' && l.ticketId === id);
+  function saldoTicket(estado, id) { return centavos(somaValor(recargasDe(estado, id)) - somaValor(comprasTicket(estado, id))); }
+  function gastoTicketMes(estado, id, ym) { return centavos(somaValor(comprasTicket(estado, id).filter((l) => mesDe(l.data) === ym))); }
+  /** Créditos e compras do mês, do mais recente para o mais antigo. */
+  function extratoTicket(estado, id, ym) {
+    const cred = recargasDe(estado, id).filter((r) => mesDe(r.data) === ym).map((r) => ({ tipo: 'credito', item: r }));
+    const comp = comprasTicket(estado, id).filter((l) => mesDe(l.data) === ym).map((l) => ({ tipo: 'compra', item: l }));
+    return cred.concat(comp).sort((a, b) => b.item.data.localeCompare(a.item.data) || (b.item.upd || 0) - (a.item.upd || 0));
+  }
+  /** Tira o cartão: as compras continuam no histórico e os créditos dele saem. */
+  function excluirTicket(estado, id) {
+    for (const l of comprasTicket(estado, id)) { delete l.ticketId; l.upd = Date.now(); }
+    for (const r of recargasDe(estado, id)) remover(estado, 'recargas', r.id);
+    remover(estado, 'tickets', id);
+  }
+
   // -------------------------------------------------------------- interpretar
   /**
    * Transforma uma frase em uma ação.
    * Retorna { tipo, ...dados } — tipos: gasto, entrada, excluir, desfazer, conta, compromisso,
-   * sonho, parcelado, resumo, contas_pendentes, agenda_hoje, ajuda, desconhecido
+   * sonho, parcelado, ticket_credito, ver_ticket, resumo, contas_pendentes, agenda_hoje, ajuda, desconhecido
    */
   function interpretar(frase, opts) {
     opts = opts || {};
@@ -696,7 +769,9 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
 
     if (/^(oi|ola|bom dia|boa tarde|boa noite|ajuda|menu|comandos|help|inicio|começar|comecar)\b/.test(t) && !extrairValor(t)) return { tipo: 'ajuda' };
     if (/\b(desfaz|desfazer|desfaca|volta o ultimo|cancela o ultimo|apaga o ultimo|exclui o ultimo|exclua o ultimo|remove o ultimo)\b/.test(t) && !/\d/.test(t)) return { tipo: 'desfazer' };
-    if (/\b(quanto (eu )?(ja )?gastei|quanto (me )?(sobrou|sobra|resta)|quanto (eu )?(tenho|posso gastar)|resumo|saldo|como (estou|esta|to|ta)|balanco|extrato|meu mes)\b/.test(t)) return { tipo: 'resumo' };
+    const tk = detectarTicket(t, opts.tickets);
+    if (tk && /\b(saldo|quanto|extrato|como esta|mostra|qual)\b/.test(t) && !(extrairValor(t) && (COMPRA_TICKET.test(t) || CREDITO_FORTE.test(t) || CREDITO_FRACO.test(t)))) return { tipo: 'ver_ticket', ticket: tk };
+    if (!tk && /\b(quanto (eu )?(ja )?gastei|quanto (me )?(sobrou|sobra|resta)|quanto (eu )?(tenho|posso gastar)|resumo|saldo|como (estou|esta|to|ta)|balanco|extrato|meu mes)\b/.test(t)) return { tipo: 'resumo' };
     if (/\b(contas? (a|pra|para) (pagar|vencer)|o que vence|quais contas|contas da semana|contas pendentes|boletos)\b/.test(t) && !extrairValor(t)) return { tipo: 'contas_pendentes' };
     if (/\b(agenda|compromissos? (de )?hoje|meus compromissos|o que tenho hoje)\b/.test(t) && !/\b(marca|marcar|agenda[r]? (uma|um|o|a)|lembra)/.test(t)) return { tipo: 'agenda_hoje' };
 
@@ -726,13 +801,16 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
     const passadoExcluir = /^(?:cancelei|apaguei|exclui|removi|deletei|estornei|retirei|tirei)\s+(?:o |a |um |uma |aquele |aquela )?(?:gasto|lancamento|compra|entrada|conta|compromisso)\b/.test(t);
     if (pedidoExcluir || passadoExcluir) {
       const termo = limparDescricao(original.replace(/\b(exclu|apag|remov|delet|cancel|tira|retira|estorn)\w*/gi, ''), [val && val.trecho, dt && dt.trecho, 'gasto', 'lancamento', 'lançamento', 'ultimo', 'último']);
-      return { tipo: 'excluir', valor: val ? val.valor : null, termo: sem(termo), data: dt ? dt.data : null, alvo: /compromisso|consulta|reuniao/.test(t) ? 'agenda' : /conta\b|boleto/.test(t) && !val ? 'conta' : 'lancamento' };
+      return { tipo: 'excluir', valor: val ? val.valor : null, termo: sem(termo), data: dt ? dt.data : null, alvo: tk && /\b(credito|recarga)\b/.test(t) ? 'recarga' : /compromisso|consulta|reuniao/.test(t) ? 'agenda' : /conta\b|boleto/.test(t) && !val ? 'conta' : 'lancamento' };
     }
 
     // "cancelei a netflix 40" conta uma novidade, não um gasto
     if (/^(cancelei|cancelamos)\b/.test(t)) return { tipo: 'desconhecido', texto: original };
 
     const fatoFeito = /\b(gastei|gastamos|comprei|compramos|paguei|pagamos|recebi|recebemos|ganhei|ganhamos|guardei|guardamos|juntei|poupei|economizei|investi|abasteci|almocei|jantei|caiu|entrou)\b/;
+
+    // "recebo 800 de ticket todo mês" não é renda fixa nem conta: o crédito é lançado quando cai
+    if (tk && val && /\b(todo mes|todos os meses|todo dia|cada mes|por mes|ao mes|mensal)\b/.test(t) && !fatoFeito.test(t)) return { tipo: 'plano', texto: original, msg: '🎟️ O crédito do Ticket não entra sozinho. Quando cair, me diga: "caiu 800 no ticket". 💙' };
 
     // RENDA FIXA: "meu salário é 5000 todo dia 5", "recebo 3000 por mês"
     const palavraRenda = /\b(salario|renda|aposentadoria|pensao|pro labore|adiantamento|recebo|ganho)\b/;
@@ -755,6 +833,19 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
     const quer = /\b(vale a pena|sera que|posso|devo|deveria|quero|queremos|queria|gostaria|pretendo|planejo|vou|vamos|preciso|pensando em|penso em|se eu)\b/.test(t);
     const verboPlano = /\b(compr\w*|gast\w*|pag\w*|guard\w*|junt\w*|invest\w*|poup\w*|econom\w*|troc\w*|viaj\w*|parcel\w*)\b/.test(t);
     if (val && !fatoFeito.test(t) && !/\b(vence|vencimento|lembr\w*|agend\w*|boleto)\b/.test(t) && ((quer && verboPlano) || /\?\s*$/.test(original))) return { tipo: 'plano', texto: original };
+
+    // TICKET: crédito sobe o saldo, compra desce. Sem verbo ("mercado 50 no ticket") é compra, como no resto do app.
+    if (tk) {
+      if (!val) return { tipo: 'ver_ticket', ticket: tk, dica: true };
+      const dataTk = dt ? dt.data : iso(hoje);
+      const resto = limparDescricao(original, [val.trecho, dt && dt.trecho, tk.trecho].concat(PALAVRAS_CREDITO));
+      const ehCredito = !COMPRA_TICKET.test(t) && (CREDITO_FORTE.test(t) || (CREDITO_FRACO.test(t) && !resto));
+      if (ehCredito) return { tipo: 'ticket_credito', ticket: tk, valor: val.valor, data: dataTk };
+      const tSemTk = t.replace(tk.trecho, ' ');
+      const catTk = adivinharCategoria(tSemTk, opts.categorias);
+      const descTk = limparDescricao(original, [val.trecho, dt && dt.trecho, tk.trecho, 'paguei', 'pago', 'usando']) || catTk;
+      return { tipo: 'gasto', valor: val.valor, desc: descTk, cat: catTk, data: dataTk, pagamento: 'Ticket', ticket: tk, cartao: null, cartaoSemBanco: false, paguei: false, chave: t };
+    }
 
     // SONHO (guardar / investir / cofrinho)
     const verboGuardar = /\b(guard(ei|ar|e|a|amos)|junt(ei|ar|e|a)|poup(ei|ar|e|a)|economiz(ei|ar)|separ(ei|ar|e|a)|reserv(ei|ar|e)|invest(i|ir|e|a|imos)|deposit(ei|ar|e|a)|apliq(uei)|aplic(ar|a|ou)|cofrinho|caixinha)\b/;
@@ -846,7 +937,7 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
       versao: 2,
       perfil: { nome: '', whatsapp: '', orcamento: 0, saldoInicial: 0, lembreteHora: '08:00', ticket: false, tema: 'auto', criadoEm: new Date().toISOString() },
       categorias: CATEGORIAS.map((c) => ({ nome: c.nome, emoji: c.emoji, cor: c.cor, limite: 0 })),
-      lancamentos: [], contas: [], rendas: [], parcelados: [], cartoes: [], anuais: [], sonhos: [{ id: uid(), nome: 'Reserva de emergência', emoji: '🛟', custo: 0, prazo: '', guardadoAntes: 0, aportes: [], upd: Date.now() }],
+      lancamentos: [], contas: [], rendas: [], parcelados: [], cartoes: [], tickets: [], recargas: [], anuais: [], sonhos: [{ id: uid(), nome: 'Reserva de emergência', emoji: '🛟', custo: 0, prazo: '', guardadoAntes: 0, aportes: [], upd: Date.now() }],
       dividas: [], agenda: [], excluidos: [], chat: []
     };
   }
@@ -870,14 +961,14 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
   }
   function sanearEstado(estado) {
     if (!estado || typeof estado !== 'object') return estado;
-    for (const col of ['lancamentos', 'contas', 'rendas', 'parcelados', 'cartoes', 'anuais', 'sonhos', 'dividas', 'agenda', 'categorias']) if (Array.isArray(estado[col])) estado[col].forEach((x) => sanearItem(x));
+    for (const col of ['lancamentos', 'contas', 'rendas', 'parcelados', 'cartoes', 'tickets', 'recargas', 'anuais', 'sonhos', 'dividas', 'agenda', 'categorias']) if (Array.isArray(estado[col])) estado[col].forEach((x) => sanearItem(x));
     if (estado.perfil) sanearItem(estado.perfil);
     if (Array.isArray(estado.chat)) estado.chat = estado.chat.slice(-200).map((m) => ({ de: m.de === 'me' ? 'me' : 'bot', txt: String(m.txt || '').slice(0, 4000), em: +m.em || 0 }));
     return estado;
   }
 
-  const COLS_DESFAZER = ['lancamentos', 'contas', 'rendas', 'parcelados', 'cartoes', 'anuais', 'sonhos', 'dividas', 'agenda'];
-  const DESFAZIVEIS = new Set(['pagar_conta', 'gasto', 'entrada', 'parcelado', 'config_cartao', 'pagar_fatura', 'conta', 'renda_fixa', 'meta_sonho', 'compromisso', 'resgate', 'sonho', 'excluir']);
+  const COLS_DESFAZER = ['lancamentos', 'contas', 'rendas', 'parcelados', 'cartoes', 'tickets', 'recargas', 'anuais', 'sonhos', 'dividas', 'agenda'];
+  const DESFAZIVEIS = new Set(['pagar_conta', 'gasto', 'entrada', 'parcelado', 'config_cartao', 'pagar_fatura', 'conta', 'renda_fixa', 'meta_sonho', 'compromisso', 'resgate', 'sonho', 'excluir', 'ticket_credito']);
   function fotografar(estado) {
     const foto = {};
     for (const col of COLS_DESFAZER) foto[col] = new Map((estado[col] || []).map((x) => [x.id, JSON.stringify(x)]));
@@ -905,6 +996,7 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
       case 'pagar_fatura': return `pagamento da fatura ${it.nome}`;
       case 'config_cartao': return `ajuste do cartão ${it.nome}`;
       case 'entrada': return `${acao.desc || acao.cat} (${brl(acao.valor)})`;
+      case 'ticket_credito': return `crédito de ${brl(acao.valor)} no Ticket`;
       case 'parcelado': return `${acao.desc} (${acao.n}x de ${brl(acao.valorParcela)})`;
       case 'conta': return `conta ${it.nome}`;
       case 'renda_fixa': return `renda fixa ${it.nome}`;
@@ -967,15 +1059,18 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
           if (c) { c.pagos = c.pagos || {}; c.pagos[ym] = true; if (acao.valor) definirValorConta(c, ym, acao.valor); c.upd = now; return { ok: true, item: c, colecao: 'contas', msg: `✅ Conta *${c.nome}* paga: ${brl(valorConta(c, ym))} em ${nomeMes(ym)}. Uma preocupação a menos! 😌` }; }
         }
         const cc = garantirCartao(estado, acao.cartao);
+        const tkc = acao.ticket ? garantirTicket(estado, acao.ticket) : null;
         const item = { id: uid(), tipo: 'gasto', data: acao.data, desc: acao.desc, cat: acao.cat, valor: acao.valor, pago: !cc && acao.pagamento !== 'Cartão', pagamento: cc ? 'Cartão' : (acao.pagamento || ''), cartaoId: cc ? cc.id : undefined, origem, upd: now };
+        if (tkc) { item.ticket = true; item.ticketId = tkc.id; }
         estado.lancamentos.push(item);
         let txtCartao = '';
-        if (cc) { const f = fatura(estado, cc.id, mesFatura(cc, acao.data), hoje); txtCartao = `\n💳 Lançado no cartão *${cc.nome}* — fatura que vence em ${dataBR(f.venc)}: ${brl(f.total)}.`; if (acao.cartao.novo) txtCartao += `\n💡 Para acertar as datas, me diga: "a fatura do ${cc.nome} vence dia 10 e fecha dia 3".`; }
+        if (tkc) { const sd = saldoTicket(estado, tkc.id); txtCartao = `\n🎟️ Pago no *${tkc.nome}*. Saldo: ${brl(sd)}.` + (sd < 0 ? '\n⚠️ O saldo ficou negativo. Se já caiu crédito, me diga: "caiu 800 no ticket".' : ''); }
+        else if (cc) { const f = fatura(estado, cc.id, mesFatura(cc, acao.data), hoje); txtCartao = `\n💳 Lançado no cartão *${cc.nome}* — fatura que vence em ${dataBR(f.venc)}: ${brl(f.total)}.`; if (acao.cartao.novo) txtCartao += `\n💡 Para acertar as datas, me diga: "a fatura do ${cc.nome} vence dia 10 e fecha dia 3".`; }
         else if (acao.pagamento && acao.pagamento !== 'Cartão') txtCartao = `\n✅ Pago no ${acao.pagamento === 'Dinheiro' ? 'dinheiro' : acao.pagamento} — já saiu do seu saldo do mês.`;
         else if (acao.cartaoSemBanco) txtCartao = (estado.cartoes || []).length ? `\n💳 Em qual cartão? Diga, por ex.: "no cartão ${(estado.cartoes[0] || {}).nome}".` : '\n💳 Dica: diga o banco ("cartão de crédito Itaú") que eu separo por cartão.';
         const r = resumoMes(estado, mesDe(acao.data));
         let extra = '';
-        if (r.orcamento > 0) {
+        if (r.orcamento > 0 && !tkc) {
           if (r.pctOrcamento >= 1) extra = `\n⚠️ Atenção: você passou do orçamento do mês (${Math.round(r.pctOrcamento * 100)}%). Vamos segurar um pouquinho? 💛`;
           else if (r.pctOrcamento >= 0.85) extra = `\n🟡 Você já usou ${Math.round(r.pctOrcamento * 100)}% do orçamento. Faltam ${brl(r.orcamento - r.gastoTotal)}.`;
           else extra = `\n✅ Orçamento sob controle: ${Math.round(r.pctOrcamento * 100)}% usado.`;
@@ -1001,6 +1096,22 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
         const item = { id: uid(), tipo: 'entrada', data: acao.data, desc: acao.desc, cat: acao.cat, valor: acao.valor, pago: true, origem, upd: now };
         estado.lancamentos.push(item);
         return { ok: true, item, colecao: 'lancamentos', msg: `💰 Que notícia boa${nomeP ? ', ' + nomeP : ''}! Entrada de ${brl(acao.valor)} (${acao.cat}) registrada.` };
+      }
+      case 'ticket_credito': {
+        const tkc = garantirTicket(estado, acao.ticket);
+        if (!tkc) return { ok: false, msg: 'Não encontrei esse cartão. Confere pra mim? 🤔' };
+        const item = { id: uid(), ticketId: tkc.id, data: acao.data || iso(hoje), desc: 'Crédito', valor: acao.valor, origem, upd: now };
+        estado.recargas = estado.recargas || [];
+        estado.recargas.push(item);
+        return { ok: true, item, colecao: 'recargas', msg: `🎟️ Crédito de ${brl(acao.valor)} no *${tkc.nome}*!\nSaldo: ${brl(saldoTicket(estado, tkc.id))}. 💙` };
+      }
+      case 'ver_ticket': {
+        const lista = estado.tickets || [];
+        if (!lista.length) return { ok: true, msg: '🎟️ Seu Ticket ainda não tem crédito. Quando cair, me diga: "caiu 800 no ticket". 💙' };
+        const ymT = mesDe(iso(hoje));
+        const umSo = acao.ticket && acao.ticket.id && !acao.ticket.generico ? lista.filter((c) => c.id === acao.ticket.id) : lista;
+        const linhas = umSo.map((c) => `🎟️ *${c.nome}*\nSaldo: ${brl(saldoTicket(estado, c.id))}\nGasto em ${nomeMes(ymT)}: ${brl(gastoTicketMes(estado, c.id, ymT))}`).join('\n\n');
+        return { ok: true, msg: linhas + (acao.dica ? '\n\nPara lançar, me diga: "caiu 800 no ticket" ou "gastei 50 no mercado no ticket".' : '') };
       }
       case 'parcelado': {
         const cc = garantirCartao(estado, acao.cartao);
@@ -1063,7 +1174,7 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
         else { s = { id: uid(), nome: acao.nome, emoji: '⭐', custo: acao.valor, prazo: '', guardadoAntes: 0, aportes: [], upd: now }; estado.sonhos.push(s); criado = true; }
         return { ok: true, item: s, colecao: 'sonhos', msg: `🌈 ${criado ? 'Sonho criado' : 'Meta atualizada'}: *${s.nome}*, ${brl(acao.valor)}. Quando guardar, me diga: "guardei 200 para ${s.nome.toLowerCase()}". ⭐` };
       }
-      case 'plano': return { ok: true, msg: '💭 Entendi isso como um plano ou uma pergunta, então não lancei nada.\nQuando acontecer, me diga: "comprei ...", "paguei ..." ou "guardei ...".' };
+      case 'plano': return { ok: true, msg: acao.msg || '💭 Entendi isso como um plano ou uma pergunta, então não lancei nada.\nQuando acontecer, me diga: "comprei ...", "paguei ..." ou "guardei ...".' };
       case 'compromisso': {
         const item = { id: uid(), titulo: acao.titulo, data: acao.data, hora: acao.hora || '', lembrar: true, feito: false, origem, upd: now };
         estado.agenda.push(item);
@@ -1107,6 +1218,7 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
         if (alvo.col === 'contas') { encerrarConta(estado, alvo.item.id, mesDe(iso(hoje))); return { ok: true, removido: alvo.item, colecao: 'contas', msg: `🗑️ Conta *${alvo.item.nome}* encerrada. Os meses anteriores continuam no seu histórico.` }; }
         remover(estado, alvo.col, alvo.item.id);
         if (alvo.col === 'agenda') return { ok: true, removido: alvo.item, colecao: 'agenda', msg: `🗑️ Compromisso *${alvo.item.titulo}* removido.` };
+        if (alvo.col === 'recargas') return { ok: true, removido: alvo.item, colecao: 'recargas', msg: `🗑️ Prontinho! Excluí o crédito de ${brl(alvo.item.valor)} do Ticket. Saldo: ${brl(saldoTicket(estado, alvo.item.ticketId))}.` };
         const l = alvo.item;
         return { ok: true, removido: l, colecao: 'lancamentos', msg: `🗑️ Prontinho! Excluí ${l.tipo === 'entrada' ? 'a entrada' : 'o gasto'} de ${brl(l.valor)} (${l.desc || l.cat}, ${dataBR(l.data)}).` };
       }
@@ -1141,6 +1253,13 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
       const a = cand.sort((x, y) => (y.upd || 0) - (x.upd || 0))[0];
       return a ? { col: 'agenda', item: a } : { msg: 'Não encontrei esse compromisso. 🤔' };
     }
+    if (acao.alvo === 'recarga') {
+      let cand = (estado.recargas || []).slice();
+      if (acao.valor != null) cand = cand.filter((r) => Math.abs(r.valor - acao.valor) < 0.005);
+      if (acao.data) cand = cand.filter((r) => r.data === acao.data);
+      const r = cand.sort((a, b) => (b.upd || 0) - (a.upd || 0))[0];
+      return r ? { col: 'recargas', item: r } : { msg: `Não encontrei esse crédito do Ticket${acao.valor != null ? ' de ' + brl(acao.valor) : ''}. Confere pra mim? 🤔` };
+    }
     if (acao.alvo === 'conta') {
       const c = estado.contas.find((x) => acao.termo && contaNoMes(x, mesDe(iso(new Date()))) && acao.termo.split(' ').some((p) => p.length > 2 && sem(x.nome).includes(p)));
       return c ? { col: 'contas', item: c } : { msg: 'Não encontrei essa conta. 🤔' };
@@ -1150,7 +1269,7 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
     if (acao.valor != null) cand = cand.filter((l) => Math.abs(l.valor - acao.valor) < 0.005);
     if (acao.data) cand = cand.filter((l) => l.data === acao.data);
     if (termos.length) {
-      const c2 = cand.filter((l) => termos.some((p) => sem(l.desc + ' ' + l.cat).includes(p)));
+      const c2 = cand.filter((l) => termos.some((p) => sem(l.desc + ' ' + l.cat + (l.ticket ? ' ticket vale alimentacao refeicao' : '')).includes(p)));
       if (c2.length || acao.valor == null) cand = c2;
     }
     if (!cand.length) return { msg: `Não encontrei esse lançamento${acao.valor != null ? ' de ' + brl(acao.valor) : ''}. Confere pra mim? 🤔` };
@@ -1160,6 +1279,7 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
     const x = alvo.item;
     if (alvo.col === 'agenda') return `o compromisso *${x.titulo}*`;
     if (alvo.col === 'contas') return `a conta *${x.nome}*`;
+    if (alvo.col === 'recargas') return `o crédito de ${brl(x.valor)} do Ticket (${dataBR(x.data)})`;
     return `${x.tipo === 'entrada' ? 'a entrada' : 'o gasto'} de ${brl(x.valor)} (${x.desc || x.cat}, ${dataBR(x.data)})`;
   }
   function rotuloFatura(f) { return { paga: '✅ Paga', parcial: '🟡 Paga parcialmente', vencida: '🔴 Vencida', aberta: '⏳ Em aberto', vazia: 'Sem compras' }[f.situacao]; }
@@ -1350,6 +1470,7 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
     const r = resumoMes(estado, ym);
     const nome = estado.perfil && estado.perfil.nome ? estado.perfil.nome : '';
     let s = `📊 *Resumo de ${nomeMes(ym)}*${nome ? ' — ' + nome : ''}\n\n💰 Entrou: ${brl(r.entradasReais)}${r.previsto ? `\n   • Ainda vai cair: ${brl(r.previsto)}` : ''}\n🛒 Gastos: ${brl(r.gastoTotal)}\n   • Contas fixas: ${brl(r.fixas)}\n   • Dia a dia: ${brl(r.gastosDia)}\n   • Parcelas: ${brl(r.parcelas)}\n⭐ Guardei p/ sonhos: ${brl(r.guardado)}\n✅ Sobrou: ${brl(r.sobra)}`;
+    for (const c of estado.tickets || []) s += `\n🎟️ ${c.nome}: saldo ${brl(saldoTicket(estado, c.id))} · gastei ${brl(gastoTicketMes(estado, c.id, ym))}`;
     if (r.maiorCategoria) s += `\n🔝 Maior gasto: ${r.maiorCategoria.nome} (${brl(r.maiorCategoria.valor)})`;
     if (r.orcamento > 0) s += `\n\n${barra(r.pctOrcamento)} ${Math.round(r.pctOrcamento * 100)}% do orçamento`;
     s += '\n\n' + mensagemHumor(r);
@@ -1373,7 +1494,7 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
   }
   function textoAjuda(estado) {
     const n = estado.perfil && estado.perfil.nome ? ', ' + estado.perfil.nome.split(' ')[0] : '';
-    return `Oi${n}! 💙 Eu sou o *Sonhaí*, seu parceiro das finanças.\n\nVocê pode me mandar texto ou áudio:\n🛒 "gastei 45,90 no mercado"\n💰 "recebi 3500 de salário"\n🔁 "meu salário é 3500 todo dia 5"\n🛍️ "comprei uma TV de 2000 em 10x no cartão Nubank"\n💳 "gastei 10 na lanchonete no cartão de crédito Itaú"\n💳 "paguei a fatura do Itaú" • "paguei 500 da fatura do Bradesco"\n🗓️ "conta de luz vence dia 10, 150 reais"\n📌 "dentista quinta às 14h"\n⭐ "guardei 200 para a viagem" • "investi 500"\n🌈 "meta de 10000 para o carro"\n💸 "retire 500 da reserva de emergência e coloque como renda"\n🔁 "transfere 300 da reserva para a viagem"\n🗑️ "exclui o gasto de 45,90"\n↩️ "desfazer"\n📊 "resumo" • "contas a pagar" • "agenda"`;
+    return `Oi${n}! 💙 Eu sou o *Sonhaí*, seu parceiro das finanças.\n\nVocê pode me mandar texto ou áudio:\n🛒 "gastei 45,90 no mercado"\n💰 "recebi 3500 de salário"\n🔁 "meu salário é 3500 todo dia 5"\n🛍️ "comprei uma TV de 2000 em 10x no cartão Nubank"\n💳 "gastei 10 na lanchonete no cartão de crédito Itaú"\n💳 "paguei a fatura do Itaú" • "paguei 500 da fatura do Bradesco"\n🎟️ "caiu 800 no ticket" • "gastei 50 no mercado no ticket" • "saldo do ticket"\n🗓️ "conta de luz vence dia 10, 150 reais"\n📌 "dentista quinta às 14h"\n⭐ "guardei 200 para a viagem" • "investi 500"\n🌈 "meta de 10000 para o carro"\n💸 "retire 500 da reserva de emergência e coloque como renda"\n🔁 "transfere 300 da reserva para a viagem"\n🗑️ "exclui o gasto de 45,90"\n↩️ "desfazer"\n📊 "resumo" • "contas a pagar" • "agenda"`;
   }
   function barra(p) { const n = Math.max(0, Math.min(10, Math.round(p * 10))); return '🟩'.repeat(Math.min(n, 7)) + (n > 7 ? '🟨'.repeat(Math.min(n - 7, 2)) : '') + (n > 9 ? '🟥' : '') + '⬜'.repeat(10 - n); }
   function mensagemHumor(r) {
@@ -1438,7 +1559,7 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
   }
 
   // ---------------------------------------------------------------- mesclagem
-  const COLECOES = ['lancamentos', 'contas', 'rendas', 'parcelados', 'cartoes', 'anuais', 'sonhos', 'dividas', 'agenda', 'categorias'];
+  const COLECOES = ['lancamentos', 'contas', 'rendas', 'parcelados', 'cartoes', 'tickets', 'recargas', 'anuais', 'sonhos', 'dividas', 'agenda', 'categorias'];
   /** Junta dois estados (celular e servidor) sem perder o que veio do WhatsApp. */
   function mesclar(a, b) {
     if (!a) return b; if (!b) return a;
@@ -1462,6 +1583,7 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
   return {
     CATEGORIAS, TIPOS_ENTRADA, INCENTIVOS, MESES, sem, uid, iso, pad, brl, dataBR, mesDe, nomeMes, mesCurto, somaMes, difMeses, diasNoMes, agora,
     VERSICULOS, versiculoDoDia, LIMITE_VALOR, LIMITE_TEXTO, sanearEstado, BANCOS, detectarCartao, garantirCartao, mesFatura, diaFechamento, vencFatura, fatura, pagarFatura, faturasAVencer, faturaDaVez, rotuloFatura,
+    NOME_TICKET, COR_TICKET, detectarTicket, garantirTicket, saldoTicket, gastoTicketMes, extratoTicket, excluirTicket,
     conversar, interpretar, aplicar, remover, acharExclusao, descreverAlvo, valorConta, definirValorConta, encerrarConta, garantirRendas, acharSonho, retirarDoSonho, estadoVazio, resumoMes, mesesComDados, parcelaNoMes, contaNoMes, contasAVencer, contasAtrasadas, totalSonho,
     textoResumo, textoContas, textoAgenda, textoAjuda, mensagemHumor, barra, mesclar, adivinharCategoria, extrairValor, extrairData, extrairHora
   };
@@ -1536,6 +1658,9 @@ function exemplo(){
   for (const m of [C.somaMes(ym, -3), C.somaMes(ym, -2)]) { itau.faturas[m] = { status: 'total', pago: null, em: Date.now() }; nu.faturas[m] = { status: 'total', pago: null, em: Date.now() }; }
   itau.faturas[ant] = { status: 'total', pago: null, em: Date.now() }; nu.faturas[ant] = { status: 'parcial', pago: 150, em: Date.now() };
   s.cartoes = [itau, nu];
+  const tk = C.garantirTicket(s, { novo: true, nome: C.NOME_TICKET });
+  s.recargas.push({ id: C.uid(), ticketId: tk.id, data: d(ym, 1), desc: 'Crédito', valor: 800, origem: 'exemplo', upd: Date.now() });
+  [['Supermercado do bairro', 'Mercado', 186.4], ['Almoço no trabalho', 'Restaurante/Lanche', 38.9]].forEach(([desc, cat, valor]) => s.lancamentos.push({ id: C.uid(), tipo: 'gasto', data: d(ym, hd), desc, cat, valor, pago: true, pagamento: 'Ticket', ticket: true, ticketId: tk.id, origem: 'exemplo', upd: Date.now() }));
   s.parcelados[0].cartaoId = itau.id; s.parcelados[1].cartaoId = nu.id;
   s.lancamentos.forEach((l) => { if (['iFood', 'Cacau Show', 'Restaurante', 'Cinema com as crianças'].includes(l.desc)) { l.cartaoId = nu.id; l.pagamento = 'Cartão'; } if (['Posto Shell', 'Assaí Atacadista', 'Supermercado', 'Gasolina'].includes(l.desc)) { l.cartaoId = itau.id; l.pagamento = 'Cartão'; } });
   s.chat = [{ de: 'me', txt: 'gastei 104,90 na ração dos cachorros', em: Date.now() - 3e6 }, { de: 'bot', txt: '🐶 Anotado! R$ 104,90 em *Pets* (Ração dos cachorros).\n✅ Orçamento sob controle: 61% usado.', em: Date.now() - 3e6 + 2000 }];
@@ -1543,8 +1668,10 @@ function exemplo(){
 }
 if (!S) { S = exemplo(); store.set(S); }
 S.cartoes = S.cartoes || [];
+S.tickets = S.tickets || [];
+S.recargas = S.recargas || [];
 const limpaEmoji = (e) => String(e || '').replace(/[<>"'&`]/g, '').slice(0, 8);
-function sanear(){ (S.categorias || []).forEach((c) => { c.emoji = limpaEmoji(c.emoji); c.cor = /^#[0-9a-f]{3,8}$/i.test(c.cor) ? c.cor : '#9AA3AF'; }); (S.sonhos || []).forEach((x) => { x.emoji = limpaEmoji(x.emoji); }); (S.cartoes || []).forEach((x) => { x.cor = /^#[0-9a-f]{3,8}$/i.test(x.cor) ? x.cor : '#1B3A6B'; }); }
+function sanear(){ (S.categorias || []).forEach((c) => { c.emoji = limpaEmoji(c.emoji); c.cor = /^#[0-9a-f]{3,8}$/i.test(c.cor) ? c.cor : '#9AA3AF'; }); (S.sonhos || []).forEach((x) => { x.emoji = limpaEmoji(x.emoji); }); (S.cartoes || []).forEach((x) => { x.cor = /^#[0-9a-f]{3,8}$/i.test(x.cor) ? x.cor : '#1B3A6B'; }); (S.tickets || []).forEach((x) => { x.cor = /^#[0-9a-f]{3,8}$/i.test(x.cor) ? x.cor : C.COR_TICKET; }); }
 sanear(); C.sanearEstado(S); C.garantirRendas(S, hoje());
 
 // ------------------------------------------------------------ salvar e sincronizar
@@ -1632,6 +1759,9 @@ const parcPaga = (p, ym) => !!(p.pagos && p.pagos[ym]);
 const chipParc = (p, ym) => parcPaga(p, ym) ? '<span class="chip ok">Paga</span>' : '<span class="chip warn">A pagar</span>';
 const checkParc = (p, ym) => '<button class="check ' + (parcPaga(p, ym) ? 'on' : '') + '" data-pagparc="' + p.id + '" data-ym="' + ym + '" aria-label="' + (parcPaga(p, ym) ? 'Marcar como não paga' : 'Marcar parcela como paga') + '">' + (parcPaga(p, ym) ? '✓' : '') + '</button>';
 const cartaoDe = (id) => (S.cartoes || []).find((c) => c.id === id);
+const ticketDe = (id) => (S.tickets || []).find((c) => c.id === id);
+/** Os tickets da pessoa; sem nenhum, um cartão vazio (null) convida a colocar o primeiro crédito. */
+const ticketsTela = () => ((S.tickets || []).length ? S.tickets : S.perfil && S.perfil.semTicket ? [] : [null]);
 // no mês atual, mostra a fatura em aberto (ela pode fechar no mês seguinte)
 const faturaTela = (c, ym) => C.fatura(S, c.id, ym === C.mesDe(hojeISO()) ? C.faturaDaVez(S, c, hoje()) : ym, hoje());
 const corSit = { paga: 'ok', parcial: 'warn', vencida: 'bad', aberta: 'info', vazia: 'info' };
@@ -1639,9 +1769,22 @@ function ccardHTML(f, extra){
   const c = f.cartao; const usoLim = c.limite ? Math.min(1, f.falta / c.limite) : 0;
   return '<button class="ccard" style="background:linear-gradient(135deg,' + c.cor + ',' + c.cor + 'CC)" data-cartao="' + c.id + '"><div class="row1"><span class="nm">' + esc(c.nome) + '</span><span class="chipz" aria-hidden="true"></span></div><div class="sm">Fatura de ' + esc(C.nomeMes(f.ym)) + ' · vence ' + C.dataBR(f.venc) + '</div><div class="tot num">' + brl(f.total) + '</div>' + (f.situacao === 'parcial' ? '<div class="sm">Pago ' + brl(f.pago) + ' · falta <b>' + brl(f.falta) + '</b></div>' : '') + (f.anterior ? '<div class="sm">Inclui ' + brl(f.anterior) + ' que ficou do mês anterior</div>' : '') + '<span class="st">' + C.rotuloFatura(f) + '</span>' + (c.limite ? '<div class="lim" title="Uso do limite"><i style="width:' + (usoLim * 100) + '%"></i></div>' : '') + (extra || '') + '</button>';
 }
+function tkcardHTML(t){
+  const id = t ? t.id : ''; const nome = t ? t.nome : C.NOME_TICKET; const cor = t ? t.cor : C.COR_TICKET;
+  const saldo = t ? C.saldoTicket(S, t.id) : 0;
+  const rodape = saldo < 0 ? '<span class="st">⚠️ Faltou lançar crédito?</span>' : '<span class="sm">' + (t ? 'Gasto em ' + esc(C.mesCurto(view.ym)) + ': ' + brl(C.gastoTicketMes(S, t.id, view.ym)) : 'Coloque o crédito para começar') + '</span>';
+  return '<div class="ccard" style="background:linear-gradient(135deg,' + cor + ',' + cor + 'CC)"><button class="tkarea" type="button" data-ticket aria-label="Ver extrato do ' + esc(nome) + '"><span class="row1"><span class="nm tk">' + esc(nome).replace('/', '/<wbr>') + '</span><span class="tkico" aria-hidden="true">🎟️</span></span><span class="sm">Saldo disponível</span><span class="tot num">' + brl(saldo) + '</span>' + rodape + '</button><div class="tkbtns"><button type="button" data-tk-credito="' + id + '">+ Crédito</button><button type="button" class="sec" data-tk-compra="' + id + '">− Compra</button></div></div>';
+}
+function itemRecarga(r){
+  return '<button class="item" data-edit-recarga="' + r.id + '"><span class="ico" style="background:var(--tile-in)">🎟️</span><span class="mid"><span class="ttl">Crédito</span><span class="meta">' + C.dataBR(r.data) + (r.origem === 'voz' ? ' · 🎤' : r.origem === 'whatsapp' ? ' · 💬' : '') + '</span></span><span class="val num in">+ ' + brl(r.valor) + '</span></button>';
+}
+function secaoTicket(t){
+  const mov = t ? C.extratoTicket(S, t.id, view.ym) : [];
+  return '<section class="card" style="display:grid;gap:12px">' + tkcardHTML(t) + (t ? '<div class="cardhead" style="margin:0"><span class="sub">Extrato de ' + esc(C.nomeMes(view.ym)) + '</span><button class="link" data-edit-ticket="' + t.id + '">✎ Editar</button></div><div class="list">' + mov.map((m) => (m.tipo === 'credito' ? itemRecarga(m.item) : itemLanc(m.item))).join('') + (!mov.length ? '<div class="empty">Nada neste mês. 🙌</div>' : '') + '</div>' : '<button class="link" data-sem-ticket>Não uso ticket</button>') + '</section>';
+}
 function itemLanc(l){
   const ci = catInfo(l.cat); const ent = l.tipo === 'entrada';
-  return '<button class="item" data-edit-lanc="' + l.id + '"><span class="ico" style="background:' + (ent ? 'var(--tile-in)' : soft(ci.cor)) + '">' + (ent ? '💰' : ci.emoji) + '</span><span class="mid"><span class="ttl">' + esc(l.desc || l.cat) + '</span><span class="meta">' + esc(l.cat) + ' · ' + C.dataBR(l.data) + (l.origem === 'voz' ? ' · 🎤' : l.origem === 'whatsapp' ? ' · 💬' : '') + (l.cartaoId && cartaoDe(l.cartaoId) ? ' · 💳 ' + esc(cartaoDe(l.cartaoId).nome) : l.pagamento ? ' · ' + esc(l.pagamento) : '') + (!ent ? (l.cartaoId || l.pagamento === 'Cartão' ? ' · na fatura' : ' · <span class="pago">✓ pago</span>') : '') + '</span></span><span class="val num ' + (ent ? 'in' : 'out') + '">' + (ent ? '+ ' : '') + brl(l.valor) + '</span></button>';
+  return '<button class="item" data-edit-lanc="' + l.id + '"><span class="ico" style="background:' + (ent ? 'var(--tile-in)' : soft(ci.cor)) + '">' + (ent ? '💰' : ci.emoji) + '</span><span class="mid"><span class="ttl">' + esc(l.desc || l.cat) + '</span><span class="meta">' + esc(l.cat) + ' · ' + C.dataBR(l.data) + (l.origem === 'voz' ? ' · 🎤' : l.origem === 'whatsapp' ? ' · 💬' : '') + (l.cartaoId && cartaoDe(l.cartaoId) ? ' · 💳 ' + esc(cartaoDe(l.cartaoId).nome) : l.ticketId && ticketDe(l.ticketId) ? ' · 🎟️ ' + esc(ticketDe(l.ticketId).nome) : l.pagamento ? ' · ' + esc(l.pagamento) : '') + (!ent ? (l.cartaoId || l.pagamento === 'Cartão' ? ' · na fatura' : ' · <span class="pago">✓ pago</span>') : '') + '</span></span><span class="val num ' + (ent ? 'in' : 'out') + '">' + (ent ? '+ ' : '') + brl(l.valor) + '</span></button>';
 }
 function sugestaoSonho(s){
   const falta = Math.max(0, (s.custo || 0) - C.totalSonho(s));
@@ -1697,7 +1840,9 @@ TELAS.inicio = function(){
   h += totCat ? '<div class="donutwrap">' + donut(dd, totCat) + '<div>' + top.map(([n, v]) => { const ci = catInfo(n); const lim = ci.limite || 0; return '<div class="catrow"><div class="h"><span>' + ci.emoji + ' ' + esc(n) + '</span><span class="num">' + brl(v) + '</span></div><div class="b"><i style="width:' + (v / top[0][1] * 100) + '%;background:' + ci.cor + '"></i></div>' + (lim && v > lim ? '<span class="chip bad">Passou do limite de ' + brl(lim) + '</span>' : '') + '</div>'; }).join('') + '</div></div>' : '<div class="empty"><span class="e">🍩</span>Seus gastos por categoria aparecem aqui.</div>';
   h += '</section>';
   h += '<section class="card"><div class="cardhead"><h2>⭐ Meus sonhos</h2><button class="link" data-go="sonhos">Ver todos ›</button></div><div class="dreams">' + (S.sonhos || []).map((s) => { const tot = C.totalSonho(s); const p = s.custo ? tot / s.custo : 0; const sg = sugestaoSonho(s); return '<button class="dream" data-sonho="' + s.id + '"><div class="top2">' + ring(p) + '<div style="min-width:0"><div class="n">' + (s.emoji || '⭐') + ' ' + esc(s.nome) + '</div><div class="s num">' + brl(tot) + (s.custo ? ' de ' + brl(s.custo) : '') + '</div></div></div><div class="s">' + (sg.mensal ? 'Guarde ' + brl(sg.mensal) + '/mês' : s.custo ? 'Defina um prazo' : 'Defina quanto custa') + '</div></button>'; }).join('') + '</div></section>';
-  if ((S.cartoes || []).length) h += '<section class="card"><div class="cardhead"><h2>💳 Cartões</h2><button class="link" data-go="cartoes">Ver faturas ›</button></div><div class="cards">' + S.cartoes.map((c) => ccardHTML(faturaTela(c, view.ym))).join('') + '</div></section>';
+  const tksHome = ticketsTela();
+  // ticket em uso vem primeiro; o cartão vazio fica no fim para não empurrar os cartões de crédito
+  if ((S.cartoes || []).length || tksHome.length) h += '<section class="card"><div class="cardhead"><h2>💳 Cartões</h2><button class="link" data-go="cartoes">Ver cartões ›</button></div><div class="cards">' + tksHome.filter(Boolean).map(tkcardHTML).join('') + S.cartoes.map((c) => ccardHTML(faturaTela(c, view.ym))).join('') + tksHome.filter((t) => !t).map(tkcardHTML).join('') + '</div></section>';
   h += '<section class="card"><div class="cardhead"><h2>🧾 Contas do mês</h2><button class="link" data-go="contas">Ver contas ›</button></div><div class="meter" style="margin-top:0"><div class="bar"><div class="fill" style="width:' + (r.contas.length ? pagas / r.contas.length * 100 : 0) + '%;background:var(--sky)"></div></div><div class="legend"><span><b>' + pagas + '</b> de ' + r.contas.length + ' pagas</span><span>Falta pagar <b>' + brl(r.fixas - r.fixasPagas) + '</b></span></div></div>' + (r.parcelas ? '<div class="note" style="margin-top:10px">🛍️ Parcelas do cartão neste mês: <b>' + brl(r.parcelas) + '</b> (' + r.parcs.length + ' compras)</div>' : '') + (r.anuaisMes.length ? '<div class="note" style="margin-top:8px">📌 Vence este mês: ' + r.anuaisMes.map((a) => esc(a.nome) + ' (' + brl(a.valor) + ')').join(', ') + '</div>' : '') + '</section>';
   h += '<section class="card"><div class="cardhead"><h2>🕑 Últimos gastos</h2><button class="link" data-go="gastos">Ver todos ›</button></div><div class="list">' + (ult.length ? ult.map(itemLanc).join('') : '<div class="empty"><span class="e">🎤</span>Toque no microfone e diga: “gastei 30 reais na padaria”.</div>') + '</div></section>';
   h += '<section class="quote" role="note"><span style="font-size:26px">💙</span><span>' + esc(C.INCENTIVOS[new Date().getDate() % C.INCENTIVOS.length]) + '</span></section>';
@@ -1739,10 +1884,12 @@ TELAS.contas = function(){
 
 TELAS.cartoes = function(){
   const ym = view.ym;
-  let h = '<section class="card"><div class="cardhead"><h2>💳 Meus cartões</h2><button class="addbtn" data-novo="cartao">+ Cartão</button></div>';
-  if (!S.cartoes.length) return h + '<div class="empty"><span class="e">💳</span>Nenhum cartão ainda. Diga: “gastei 10 na lanchonete no cartão de crédito Itaú” que eu crio o cartão sozinho.</div></section>';
+  const tks = ticketsTela();
+  let h = '<section class="card"><div class="cardhead"><h2>💳 Meus cartões</h2><div style="display:flex;gap:6px;flex:none">' + (tks[0] !== null ? '<button class="addbtn" data-novo="ticket">+ Ticket</button>' : '') + '<button class="addbtn" data-novo="cartao">+ Cartão</button></div></div>';
   const tot = S.cartoes.map((c) => faturaTela(c, ym));
-  h += '<div class="sub">' + (ym === C.mesDe(hojeISO()) ? 'Faturas em aberto' : 'Faturas de ' + esc(C.nomeMes(ym))) + ': <b>' + brl(tot.reduce((a, b) => a + b.total, 0)) + '</b> · falta pagar <b>' + brl(tot.reduce((a, b) => a + (b.situacao === 'paga' ? 0 : b.falta), 0)) + '</b></div></section>';
+  h += (S.cartoes.length ? '<div class="sub">' + (ym === C.mesDe(hojeISO()) ? 'Faturas em aberto' : 'Faturas de ' + esc(C.nomeMes(ym))) + ': <b>' + brl(tot.reduce((a, b) => a + b.total, 0)) + '</b> · falta pagar <b>' + brl(tot.reduce((a, b) => a + (b.situacao === 'paga' ? 0 : b.falta), 0)) + '</b></div>' : '<div class="empty"><span class="e">💳</span>Nenhum cartão de crédito ainda. Diga: “gastei 10 na lanchonete no cartão de crédito Itaú” que eu crio o cartão sozinho.</div>') + '</section>';
+  h += tks.map(secaoTicket).join('');
+  if (!S.cartoes.length) return h;
   tot.forEach((f) => {
     const itens = f.compras.slice().sort((a, b) => b.data.localeCompare(a.data));
     h += '<section class="card" style="display:grid;gap:12px">' + ccardHTML(f) + '<div class="btnrow"><button class="btn ' + (f.situacao === 'paga' ? 'ghost' : 'pri') + '" data-pagfat="' + f.cartao.id + '" data-ym="' + f.ym + '">' + (f.situacao === 'paga' ? '✓ Paga · alterar' : f.situacao === 'parcial' ? '💳 Pagar o restante' : '💳 Pagar fatura') + '</button><button class="btn ghost" data-edit-cartao="' + f.cartao.id + '" style="flex:0 0 auto">✎</button></div>';
@@ -1923,7 +2070,7 @@ TELAS.ajustes = function(){
   h += '<section class="card"><h2 style="margin-bottom:10px">🏷️ Categorias e limites</h2><div class="sub" style="margin-bottom:8px">Toque para mudar o emoji, o nome ou colocar um limite mensal. Eu aviso quando passar.</div><div class="list">' + S.categorias.map((c, i) => '<button class="item" data-edit-cat="' + i + '"><span class="ico" style="background:' + soft(c.cor) + '">' + c.emoji + '</span><span class="mid"><span class="ttl">' + esc(c.nome) + '</span><span class="meta">' + (c.limite ? 'Limite ' + brl(c.limite) : 'Sem limite') + '</span></span></button>').join('') + '</div><button class="btn ghost block" style="margin-top:8px" data-novo="categoria">+ Nova categoria</button></section>';
   h += '<section class="card"><h2 style="margin-bottom:10px">💾 Meus dados no aparelho</h2><div class="btnrow"><button class="btn ghost" id="bk-exp">⬇️ Copiar backup</button><label class="btn ghost" for="bk-imp">⬆️ Importar backup</label><input id="bk-imp" type="file" accept=".json,application/json" hidden></div>' + (SERVER ? '' : '<div class="btnrow" style="margin-top:8px"><button class="btn ghost" id="bk-demo">🧪 Ver exemplo</button><button class="btn danger" id="bk-zero">🧹 Começar do zero</button></div>') + '<div id="bk-out"></div></section>';
   h += blocoConta();
-  h += '<p class="sub" style="text-align:center">Sonhaí · versão 1.8 (04/11) · feito com 💙 para ajudar famílias</p>';
+  h += '<p class="sub" style="text-align:center">Sonhaí · versão 1.9 (05/11) · feito com 💙 para ajudar famílias</p>';
   return h;
 };
 
@@ -1969,6 +2116,12 @@ function bind(){
   A.querySelectorAll('[data-pagparc]').forEach((b) => b.onclick = (e) => { e.stopPropagation(); const p = S.parcelados.find((x) => x.id === b.dataset.pagparc); const ym = b.dataset.ym; p.pagos = p.pagos || {}; p.pagos[ym] = !p.pagos[ym]; p.upd = Date.now(); save(); toast(p.pagos[ym] ? '✅ Parcela de ' + p.desc + ' paga' : 'Parcela marcada como não paga'); });
   A.querySelectorAll('[data-pagfat]').forEach((b) => b.onclick = (e) => { e.stopPropagation(); formPagarFatura(b.dataset.pagfat, b.dataset.ym); });
   A.querySelectorAll('[data-cartao]').forEach((b) => b.onclick = () => go('cartoes'));
+  A.querySelectorAll('[data-ticket]').forEach((b) => b.onclick = () => go('cartoes'));
+  A.querySelectorAll('[data-tk-credito]').forEach((b) => b.onclick = () => formCredito(ticketDe(b.dataset.tkCredito)));
+  A.querySelectorAll('[data-tk-compra]').forEach((b) => b.onclick = () => formLanc(null, 'gasto', { ticket: b.dataset.tkCompra }));
+  A.querySelectorAll('[data-edit-ticket]').forEach((b) => b.onclick = () => formTicket(ticketDe(b.dataset.editTicket)));
+  A.querySelectorAll('[data-edit-recarga]').forEach((b) => b.onclick = () => formCredito(null, (S.recargas || []).find((x) => x.id === b.dataset.editRecarga)));
+  A.querySelectorAll('[data-sem-ticket]').forEach((b) => b.onclick = () => { S.perfil.semTicket = true; S.perfilUpd = Date.now(); save(); toast('Tudo bem! Se precisar, toque em + Ticket aqui em Cartões.'); });
   A.querySelectorAll('[data-edit-cartao]').forEach((b) => b.onclick = () => formCartao(cartaoDe(b.dataset.editCartao)));
   A.querySelectorAll('[data-edit-parc]').forEach((b) => b.onclick = () => formParc(S.parcelados.find((x) => x.id === b.dataset.editParc)));
   A.querySelectorAll('[data-edit-ag]').forEach((b) => b.onclick = () => formAgenda(S.agenda.find((x) => x.id === b.dataset.editAg)));
@@ -1979,7 +2132,7 @@ function bind(){
   A.querySelectorAll('[data-edit-div]').forEach((b) => b.onclick = () => formDivida(S.dividas.find((x) => x.id === b.dataset.editDiv)));
   A.querySelectorAll('[data-edit-anual]').forEach((b) => b.onclick = () => formAnual(S.anuais.find((x) => x.id === b.dataset.editAnual)));
   A.querySelectorAll('[data-edit-cat]').forEach((b) => b.onclick = () => formCat(+b.dataset.editCat));
-  A.querySelectorAll('[data-novo]').forEach((b) => b.onclick = () => ({ gasto: () => formLanc(null, 'gasto'), entrada: () => formLanc(null, 'entrada'), conta: () => formConta(), renda: () => formRenda(), parcelado: () => formParc(), compromisso: () => formAgenda(), sonho: () => formSonho(), divida: () => formDivida(), cartao: () => formCartao(), anual: () => formAnual(), categoria: () => formCat(-1) })[b.dataset.novo]());
+  A.querySelectorAll('[data-novo]').forEach((b) => b.onclick = () => ({ gasto: () => formLanc(null, 'gasto'), entrada: () => formLanc(null, 'entrada'), conta: () => formConta(), renda: () => formRenda(), parcelado: () => formParc(), compromisso: () => formAgenda(), sonho: () => formSonho(), divida: () => formDivida(), cartao: () => formCartao(), ticket: () => formTicket(), anual: () => formAnual(), categoria: () => formCat(-1) })[b.dataset.novo]());
   A.querySelectorAll('[data-aba-g]').forEach((b) => b.onclick = () => { view.abaGastos = b.dataset.abaG; view.filtroCat = ''; render(); });
   A.querySelectorAll('[data-fcat]').forEach((b) => b.onclick = () => { view.filtroCat = b.dataset.fcat; render(); });
   A.querySelectorAll('[data-dia]').forEach((b) => b.onclick = () => { view.diaAgenda = b.dataset.dia; render(); });
@@ -2043,12 +2196,13 @@ function backupExport(){
 // ------------------------------------------------------------ formulários
 function catPicker(sel){ return '<div class="catpick" id="catpick">' + S.categorias.map((c) => '<button type="button" class="' + (c.nome === sel ? 'on' : '') + '" data-c="' + esc(c.nome) + '"><span>' + c.emoji + '</span><span>' + esc(c.nome.split('/')[0]) + '</span></button>').join('') + '</div>'; }
 function bindCat(root, cb){ root.querySelectorAll('#catpick button').forEach((b) => b.onclick = () => { root.querySelectorAll('#catpick button').forEach((x) => x.classList.remove('on')); b.classList.add('on'); cb(b.dataset.c); }); }
-function formLanc(l, tipo){
+function formLanc(l, tipo, pre){
   const novo = !l; tipo = l ? l.tipo : tipo; let cat = l ? l.cat : (tipo === 'entrada' ? 'Salário' : 'Mercado');
   const ent = tipo === 'entrada';
-  sheet('<h3>' + (novo ? (ent ? '💰 Nova entrada' : '🛒 Novo gasto') : '✎ Editar') + '</h3><form id="fl"><div class="field"><label for="fl-v">Valor</label><input id="fl-v" class="money" inputmode="decimal" placeholder="0,00" value="' + (l ? String(l.valor).replace('.', ',') : '') + '" required></div><div class="field"><label for="fl-d">' + (ent ? 'De onde veio' : 'O que comprou / onde') + '</label><input id="fl-d" value="' + esc(l ? l.desc : '') + '" placeholder="' + (ent ? 'Salário' : 'Supermercado') + '"></div><div class="grid2"><div class="field"><label for="fl-dt">Data</label><input id="fl-dt" type="date" value="' + (l ? l.data : hojeISO()) + '"></div><div class="field"><label for="fl-p">' + (ent ? 'Tipo' : 'Pagamento') + '</label>' + (ent ? '<select id="fl-p">' + C.TIPOS_ENTRADA.map((x) => '<option' + (cat === x ? ' selected' : '') + '>' + x + '</option>').join('') + '</select>' : '<select id="fl-p">' + ['', 'Pix', 'Débito', 'Dinheiro', 'Ticket/VA'].map((x) => '<option value="' + x + '"' + (l && !l.cartaoId && (l.pagamento === x || (x === 'Ticket/VA' && l.ticket)) ? ' selected' : '') + '>' + (x || '—') + '</option>').join('') + S.cartoes.map((c) => '<option value="card:' + c.id + '"' + (l && l.cartaoId === c.id ? ' selected' : '') + '>💳 Crédito ' + esc(c.nome) + '</option>').join('') + '<option value="Cartão"' + (l && l.pagamento === 'Cartão' && !l.cartaoId ? ' selected' : '') + '>💳 Outro cartão</option></select>') + '</div></div>' + (ent ? '' : '<div class="field"><label>Categoria</label>' + catPicker(cat) + '</div>') + '<div class="btnrow">' + (novo ? '' : '<button type="button" class="btn danger" id="fl-x">🗑️ Excluir</button>') + '<button class="btn pri" type="submit">Salvar</button></div></form>', (root) => {
+  const preTk = !l && pre ? pre.ticket : undefined; // '' é o cartão vazio, antes do primeiro crédito
+  sheet('<h3>' + (novo ? (ent ? '💰 Nova entrada' : preTk !== undefined ? '🎟️ Compra no Ticket' : '🛒 Novo gasto') : '✎ Editar') + '</h3><form id="fl"><div class="field"><label for="fl-v">Valor</label><input id="fl-v" class="money" inputmode="decimal" placeholder="0,00" value="' + (l ? String(l.valor).replace('.', ',') : '') + '" required></div><div class="field"><label for="fl-d">' + (ent ? 'De onde veio' : 'O que comprou / onde') + '</label><input id="fl-d" value="' + esc(l ? l.desc : '') + '" placeholder="' + (ent ? 'Salário' : 'Supermercado') + '"></div><div class="grid2"><div class="field"><label for="fl-dt">Data</label><input id="fl-dt" type="date" value="' + (l ? l.data : hojeISO()) + '"></div><div class="field"><label for="fl-p">' + (ent ? 'Tipo' : 'Pagamento') + '</label>' + (ent ? '<select id="fl-p">' + C.TIPOS_ENTRADA.map((x) => '<option' + (cat === x ? ' selected' : '') + '>' + x + '</option>').join('') + '</select>' : '<select id="fl-p">' + ['', 'Pix', 'Débito', 'Dinheiro'].concat(l && l.ticket && !l.ticketId ? ['Ticket/VA'] : []).map((x) => '<option value="' + x + '"' + (l && !l.cartaoId && (l.pagamento === x || (x === 'Ticket/VA' && l.ticket)) ? ' selected' : '') + '>' + (x || '—') + '</option>').join('') + ticketsTela().map((k) => '<option value="ticket:' + (k ? k.id : 'novo') + '"' + ((l && k && l.ticketId === k.id) || (preTk !== undefined && preTk === (k ? k.id : '')) ? ' selected' : '') + '>🎟️ ' + esc(k ? k.nome : C.NOME_TICKET) + '</option>').join('') + S.cartoes.map((c) => '<option value="card:' + c.id + '"' + (l && l.cartaoId === c.id ? ' selected' : '') + '>💳 Crédito ' + esc(c.nome) + '</option>').join('') + '<option value="Cartão"' + (l && l.pagamento === 'Cartão' && !l.cartaoId ? ' selected' : '') + '>💳 Outro cartão</option></select>') + '</div></div>' + (ent ? '' : '<div class="field"><label>Categoria</label>' + catPicker(cat) + '</div>') + '<div class="btnrow">' + (novo ? '' : '<button type="button" class="btn danger" id="fl-x">🗑️ Excluir</button>') + '<button class="btn pri" type="submit">Salvar</button></div></form>', (root) => {
     bindCat(root, (c) => cat = c);
-    $('#fl').onsubmit = (e) => { e.preventDefault(); const v = num($('#fl-v').value); if (!v) { $('#fl-v').focus(); return; } const pg = $('#fl-p').value; const o = l || { id: C.uid(), tipo, pago: true, origem: 'manual' }; Object.assign(o, { valor: v, desc: $('#fl-d').value.trim() || (ent ? pg : cat), data: $('#fl-dt').value || hojeISO(), cat: ent ? pg : cat, pagamento: ent ? '' : (pg === 'Ticket/VA' ? 'Ticket' : pg.startsWith('card:') ? 'Cartão' : pg), cartaoId: !ent && pg.startsWith('card:') ? pg.slice(5) : undefined, ticket: !ent && pg === 'Ticket/VA', pago: ent || !(pg.startsWith('card:') || pg === 'Cartão'), upd: Date.now() }); if (novo) S.lancamentos.push(o); fechar(); save(); toast(ent ? '💰 Entrada salva!' : catInfo(cat).emoji + ' Gasto salvo!'); };
+    $('#fl').onsubmit = (e) => { e.preventDefault(); const v = num($('#fl-v').value); if (!v) { $('#fl-v').focus(); return; } const pg = $('#fl-p').value; const ehTk = !ent && pg.startsWith('ticket:'); const tkId = !ehTk ? undefined : pg === 'ticket:novo' ? C.garantirTicket(S, { novo: true, nome: C.NOME_TICKET }).id : pg.slice(7); const o = l || { id: C.uid(), tipo, pago: true, origem: 'manual' }; Object.assign(o, { valor: v, desc: $('#fl-d').value.trim() || (ent ? pg : cat), data: $('#fl-dt').value || hojeISO(), cat: ent ? pg : cat, pagamento: ent ? '' : (pg === 'Ticket/VA' || ehTk ? 'Ticket' : pg.startsWith('card:') ? 'Cartão' : pg), cartaoId: !ent && pg.startsWith('card:') ? pg.slice(5) : undefined, ticket: !ent && (pg === 'Ticket/VA' || ehTk), ticketId: tkId, pago: ent || !(pg.startsWith('card:') || pg === 'Cartão'), upd: Date.now() }); if (novo) S.lancamentos.push(o); fechar(); save(); toast(ent ? '💰 Entrada salva!' : ehTk ? '🎟️ Compra salva! Saldo: ' + brl(C.saldoTicket(S, tkId)) : catInfo(cat).emoji + ' Gasto salvo!'); };
     if (!novo) $('#fl-x').onclick = () => { const bk = JSON.parse(JSON.stringify(l)); C.remover(S, 'lancamentos', l.id); fechar(); save(); toast('🗑️ Excluído', () => { S.excluidos = S.excluidos.filter((x) => x.id !== bk.id); bk.upd = Date.now(); S.lancamentos.push(bk); save(); }); };
   });
 }
@@ -2082,6 +2236,32 @@ function formCartao(c){
     root.querySelectorAll('[data-cor]').forEach((b) => b.onclick = () => { cor = b.dataset.cor; root.querySelectorAll('[data-cor]').forEach((x) => x.style.borderColor = x === b ? 'var(--ink)' : 'transparent'); });
     $('#fk2').onsubmit = (e) => { e.preventDefault(); const o = c || { id: C.uid(), faturas: {} }; Object.assign(o, { nome: $('#ck-n').value.trim(), cor, diaVenc: Math.max(1, Math.min(31, +$('#ck-v').value || 10)), fechamento: Math.max(0, Math.min(31, +$('#ck-f').value || 0)), limite: num($('#ck-l').value), upd: Date.now() }); if (novo) S.cartoes.push(o); fechar(); save(); toast('💳 Cartão salvo!'); };
     if (!novo) $('#ck-x').onclick = () => confirmar('Excluir o cartão ' + c.nome + '? As compras continuam, só ficam sem cartão.', () => { [...S.lancamentos, ...S.parcelados].forEach((x) => { if (x.cartaoId === c.id) { x.cartaoId = undefined; x.upd = Date.now(); } }); C.remover(S, 'cartoes', c.id); save(); toast('🗑️ Cartão removido'); });
+  });
+}
+function formCredito(t, r){
+  const novo = !r; if (r) t = ticketDe(r.ticketId);
+  sheet('<h3>' + (novo ? '🎟️ Colocar crédito' : '✎ Editar crédito') + '</h3><p class="sub" style="margin:0 0 12px">' + esc(t ? t.nome : C.NOME_TICKET) + ' · saldo atual <b class="num">' + brl(t ? C.saldoTicket(S, t.id) : 0) + '</b></p><form id="ftk"><div class="field"><label for="ftk-v">Valor do crédito</label><input id="ftk-v" class="money" inputmode="decimal" placeholder="0,00" value="' + (r ? String(r.valor).replace('.', ',') : '') + '" required></div><div class="field"><label for="ftk-d">Data</label><input id="ftk-d" type="date" value="' + (r ? r.data : hojeISO()) + '"></div><div class="btnrow">' + (novo ? '' : '<button type="button" class="btn danger" id="ftk-x">🗑️ Excluir</button>') + '<button class="btn pri" type="submit">Salvar</button></div></form>', () => {
+    $('#ftk').onsubmit = (e) => {
+      e.preventDefault(); const v = num($('#ftk-v').value); if (!v) { $('#ftk-v').focus(); return; } const data = $('#ftk-d').value || hojeISO();
+      if (!novo) { Object.assign(r, { valor: v, data, upd: Date.now() }); fechar(); save(); toast('🎟️ Crédito salvo! Saldo: ' + brl(C.saldoTicket(S, r.ticketId))); return; }
+      const res = C.aplicar(S, { tipo: 'ticket_credito', ticket: t ? { id: t.id } : { novo: true, nome: C.NOME_TICKET }, valor: v, data }, { hoje: hoje(), origem: 'manual' });
+      fechar(); save(); toast('🎟️ Crédito salvo! Saldo: ' + brl(C.saldoTicket(S, res.item.ticketId)), res.podeDesfazer ? () => { C.aplicar(S, { tipo: 'desfazer' }, { hoje: hoje() }); save(); } : null);
+    };
+    if (!novo) $('#ftk-x').onclick = () => { const bk = JSON.parse(JSON.stringify(r)); C.remover(S, 'recargas', r.id); fechar(); save(); toast('🗑️ Crédito excluído', () => { S.excluidos = S.excluidos.filter((x) => x.id !== bk.id); bk.upd = Date.now(); S.recargas.push(bk); save(); }); };
+  });
+}
+function formTicket(t){
+  const novo = !t; let cor = t ? t.cor : C.COR_TICKET;
+  const cores = [C.COR_TICKET].concat(CORES_CARTAO);
+  sheet('<h3>' + (novo ? '🎟️ Novo Ticket' : '✎ ' + esc(t.nome)) + '</h3><form id="ftn"><div class="field"><label for="tn-n">Nome do cartão</label><input id="tn-n" value="' + esc(t ? t.nome : (S.tickets || []).length ? '' : C.NOME_TICKET) + '" placeholder="Ticket, Alelo, VR, Caju…" required></div><div class="field"><label>Cor</label><div class="chips" id="tn-cor">' + cores.map((x) => '<button type="button" data-cor="' + x + '" style="width:36px;height:36px;padding:0;flex:none;background:' + x + ';border:3px solid ' + (x === cor ? 'var(--ink)' : 'transparent') + '" aria-label="Cor"></button>').join('') + '</div></div><div class="note" style="margin-bottom:12px">💡 O crédito soma no saldo e cada compra desconta. Nada disso muda o saldo do mês.</div><div class="btnrow">' + (novo ? '' : '<button type="button" class="btn danger" id="tn-x">🗑️ Excluir</button>') + '<button class="btn pri" type="submit">Salvar</button></div></form>', (root) => {
+    root.querySelectorAll('[data-cor]').forEach((b) => b.onclick = () => { cor = b.dataset.cor; root.querySelectorAll('[data-cor]').forEach((x) => x.style.borderColor = x === b ? 'var(--ink)' : 'transparent'); });
+    $('#ftn').onsubmit = (e) => {
+      e.preventDefault(); const nome = $('#tn-n').value.trim(); if (!nome) { $('#tn-n').focus(); return; }
+      const o = t || C.garantirTicket(S, { nome, cor }); Object.assign(o, { nome, cor, upd: Date.now() });
+      if (S.perfil.semTicket) { S.perfil.semTicket = false; S.perfilUpd = Date.now(); }
+      fechar(); save(); toast('🎟️ Ticket salvo!');
+    };
+    if (!novo) $('#tn-x').onclick = () => confirmar('Excluir o ' + t.nome + '? Os créditos somem e as compras continuam no histórico.', () => { C.excluirTicket(S, t.id); if (!S.tickets.length) { S.perfil.semTicket = true; S.perfilUpd = Date.now(); } save(); toast('🗑️ Ticket removido'); });
   });
 }
 function formPagarFatura(id, ym){
@@ -2190,12 +2370,12 @@ async function gravar(){
   } catch (e) { tx.textContent = 'Microfone bloqueado 🙈'; $('#vz-hint').textContent = 'Escreva a frase abaixo — funciona igualzinho.'; }
 }
 function pararVoz(){ try { rec && rec.stop(); } catch(e){} try { gravador && gravador.state === 'recording' && gravador.stop(); } catch(e){} }
-const ROTULO = { pagar_fatura: '💳 Pagar fatura', config_cartao: '💳 Ajustar cartão', resgate: '💸 Retirar do sonho', gasto: '🛒 Gasto', entrada: '💰 Entrada', parcelado: '🛍️ Compra parcelada', conta: '🧾 Conta fixa', compromisso: '📌 Compromisso', sonho: '⭐ Guardar para sonho', excluir: '🗑️ Excluir', desfazer: '↩️ Desfazer', pagar_conta: '✅ Conta paga', renda_fixa: '🔁 Renda fixa', meta_sonho: '🌈 Meta de sonho' };
+const ROTULO = { ticket_credito: '🎟️ Crédito no Ticket', pagar_fatura: '💳 Pagar fatura', config_cartao: '💳 Ajustar cartão', resgate: '💸 Retirar do sonho', gasto: '🛒 Gasto', entrada: '💰 Entrada', parcelado: '🛍️ Compra parcelada', conta: '🧾 Conta fixa', compromisso: '📌 Compromisso', sonho: '⭐ Guardar para sonho', excluir: '🗑️ Excluir', desfazer: '↩️ Desfazer', pagar_conta: '✅ Conta paga', renda_fixa: '🔁 Renda fixa', meta_sonho: '🌈 Meta de sonho' };
 function previa(frase, origem){
-  const a = C.interpretar(String(frase).slice(0, 150), { hoje: hoje(), categorias: S.categorias, sonhos: S.sonhos, cartoes: S.cartoes });
+  const a = C.interpretar(String(frase).slice(0, 150), { hoje: hoje(), categorias: S.categorias, sonhos: S.sonhos, cartoes: S.cartoes, tickets: S.tickets });
   if ((a.valor && a.valor > C.LIMITE_VALOR) || (a.valorParcela && a.valorParcela > C.LIMITE_VALOR)) { const box0 = $('#vz-res'); if (box0) box0.innerHTML = '<div class="result" style="border-color:var(--bad)"><div class="msg">🙈 O valor máximo é R$ 99.000.000,00. Confere o valor pra mim?</div></div>'; return; }
   const box = $('#vz-res'); if (!box) return;
-  if (['resumo', 'contas_pendentes', 'agenda_hoje', 'ajuda', 'desconhecido', 'ver_fatura', 'plano'].includes(a.tipo)) { const r = C.aplicar(S, a, { hoje: hoje() }); box.innerHTML = '<div class="result" style="border-color:var(--sky)"><div class="msg">' + fmtWa(r.msg) + '</div></div>'; return; }
+  if (['resumo', 'contas_pendentes', 'agenda_hoje', 'ajuda', 'desconhecido', 'ver_fatura', 'ver_ticket', 'plano'].includes(a.tipo)) { const r = C.aplicar(S, a, { hoje: hoje() }); box.innerHTML = '<div class="result" style="border-color:var(--sky)"><div class="msg">' + fmtWa(r.msg) + '</div></div>'; return; }
   let det = '';
   if (a.tipo === 'excluir') {
     const ax = C.acharExclusao(S, a);
@@ -2209,8 +2389,9 @@ function previa(frase, origem){
   }
   else if (a.tipo === 'renda_fixa') det = '<b class="num" style="font-size:24px">' + brl(a.valor) + '</b><span>' + esc(a.nome) + ' · todo dia ' + a.dia + '</span>';
   else if (a.tipo === 'meta_sonho') det = '<b class="num" style="font-size:24px">' + brl(a.valor) + '</b><span>Sonho: ' + esc(a.nome) + '</span>';
-  else if (a.tipo === 'gasto') det = '<b class="num" style="font-size:24px">' + brl(a.valor) + '</b><span>' + catInfo(a.cat).emoji + ' ' + esc(a.cat) + (a.desc && a.desc !== a.cat ? ' · ' + esc(a.desc) : '') + ' · ' + C.dataBR(a.data) + '</span>' + (a.cartao ? '<span>💳 Cartão de crédito <b>' + esc(a.cartao.nome) + '</b>' + (a.cartao.novo ? ' (novo cartão)' : '') + '</span>' : a.cartaoSemBanco ? '<span>💳 Cartão (diga o banco para separar)</span>' : '') + catPicker(a.cat);
+  else if (a.tipo === 'gasto') det = '<b class="num" style="font-size:24px">' + brl(a.valor) + '</b><span>' + catInfo(a.cat).emoji + ' ' + esc(a.cat) + (a.desc && a.desc !== a.cat ? ' · ' + esc(a.desc) : '') + ' · ' + C.dataBR(a.data) + '</span>' + (a.ticket ? '<span>🎟️ <b>' + esc(a.ticket.nome) + '</b> · saldo depois: <b class="num">' + brl((a.ticket.id ? C.saldoTicket(S, a.ticket.id) : 0) - a.valor) + '</b></span>' : a.cartao ? '<span>💳 Cartão de crédito <b>' + esc(a.cartao.nome) + '</b>' + (a.cartao.novo ? ' (novo cartão)' : '') + '</span>' : a.cartaoSemBanco ? '<span>💳 Cartão (diga o banco para separar)</span>' : '') + catPicker(a.cat);
   else if (a.tipo === 'entrada') det = '<b class="num" style="font-size:24px">' + brl(a.valor) + '</b><span>' + esc(a.cat) + ' · ' + C.dataBR(a.data) + '</span>';
+  else if (a.tipo === 'ticket_credito') det = '<b class="num" style="font-size:24px">' + brl(a.valor) + '</b><span>🎟️ <b>' + esc(a.ticket.nome) + '</b> · ' + C.dataBR(a.data) + '</span><span>Saldo depois: <b class="num">' + brl((a.ticket.id ? C.saldoTicket(S, a.ticket.id) : 0) + a.valor) + '</b></span>';
   else if (a.tipo === 'parcelado') det = '<b>' + esc(a.desc) + '</b><span>' + a.n + 'x de ' + brl(a.valorParcela) + '</span>' + (a.cartao ? '<span>💳 Cartão <b>' + esc(a.cartao.nome) + '</b></span>' : '');
   else if (a.tipo === 'pagar_fatura') { const cf = a.cartao && a.cartao.id ? cartaoDe(a.cartao.id) : (S.cartoes || []).length === 1 ? S.cartoes[0] : null; const ymf = a.ymAuto && cf ? C.faturaDaVez(S, cf, hoje()) : a.ym; det = '<span>Fatura ' + esc(a.cartao && a.cartao.nome || (cf && cf.nome) || '') + ' de ' + C.mesCurto(ymf) + (a.parcial ? ' · pagamento parcial de <b>' + brl(a.valor) + '</b>' : ' · <b>total</b>') + '</span>'; }
   else if (a.tipo === 'config_cartao') det = '<span>Cartão ' + esc(a.cartao && a.cartao.nome || '') + (a.diaVenc ? ' · vence dia ' + a.diaVenc : '') + (a.fechamento ? ' · fecha dia ' + a.fechamento : '') + '</span>';
@@ -2226,7 +2407,7 @@ function previa(frase, origem){
   const root = box; bindCat(root, (c) => { a.cat = c; });
   const sel = $('#vz-sn'); if (sel) { const sync = () => { $('#vz-sn-n').hidden = sel.value !== 'novo'; }; sel.onchange = sync; sync(); }
   $('#vz-ok').onclick = () => { if (sel) { if (sel.value === 'novo') { const n = $('#vz-sn-n').value.trim(); if (!n) { $('#vz-sn-n').focus(); return; } a.termo = n; delete a.sonhoId; } else a.sonhoId = sel.value; } const r = C.aplicar(S, a, { hoje: hoje(), origem: origem || 'voz' }); fechar(); save(); toast(r.msg.split('\n')[0].replace(/\*/g, ''), r.podeDesfazer ? () => { C.aplicar(S, { tipo: 'desfazer' }, { hoje: hoje() }); save(); } : null); if (a.tipo === 'sonho' && r.ok) confete(); if (!r.ok) toast(r.msg.split('\n')[0]); };
-  $('#vz-ed').onclick = () => { if (a.tipo === 'gasto' || a.tipo === 'entrada') { fechar(); formLanc(null, a.tipo); $('#fl-v').value = String(a.valor).replace('.', ','); $('#fl-d').value = a.desc; $('#fl-dt').value = a.data; } else if (a.tipo === 'compromisso') { fechar(); formAgenda(); $('#fa-t').value = a.titulo; $('#fa-d').value = a.data; $('#fa-h').value = a.hora; } else if (a.tipo === 'conta') { fechar(); formConta(); $('#fc-n').value = a.nome; $('#fc-v').value = a.valor ? String(a.valor).replace('.', ',') : ''; $('#fc-d').value = a.dia; } else { $('#vz-in').focus(); } };
+  $('#vz-ed').onclick = () => { if (a.tipo === 'ticket_credito') { pararVoz(); formCredito(a.ticket.id ? ticketDe(a.ticket.id) : null); $('#ftk-v').value = String(a.valor).replace('.', ','); $('#ftk-d').value = a.data; } else if (a.tipo === 'gasto' || a.tipo === 'entrada') { pararVoz(); formLanc(null, a.tipo, a.ticket ? { ticket: a.ticket.id || '' } : undefined); $('#fl-v').value = String(a.valor).replace('.', ','); $('#fl-d').value = a.desc; $('#fl-dt').value = a.data; } else if (a.tipo === 'compromisso') { pararVoz(); formAgenda(); $('#fa-t').value = a.titulo; $('#fa-d').value = a.data; $('#fa-h').value = a.hora; } else if (a.tipo === 'conta') { pararVoz(); formConta(); $('#fc-n').value = a.nome; $('#fc-v').value = a.valor ? String(a.valor).replace('.', ',') : ''; $('#fc-d').value = a.dia; } else { $('#vz-in').focus(); } };
 }
 
 // ------------------------------------------------------------ simulador do WhatsApp

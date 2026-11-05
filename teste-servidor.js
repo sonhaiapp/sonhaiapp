@@ -94,6 +94,10 @@ const zapEntra = async (de, texto) => { const corpo = JSON.stringify({ entry: [{
   await req('PUT', '/api/estado', { estado: Object.assign((await req('GET', '/api/estado', null, ana.j.token)).j.estado, { lancamentos: [{ id: 'l1', tipo: 'gasto', data: '2026-11-04', desc: 'Pão; leite', cat: 'Mercado', valor: 12.5, upd: Date.now() }] }) }, ana.j.token);
   const csv = await req('GET', '/api/meus-dados?formato=csv', null, ana.j.token);
   confere('CSV abre no Excel', [csv.s, csv.tx.includes('Data;Tipo;Descrição'), csv.tx.includes('2026-11-04;Gasto;"Pão; leite";Mercado;12,5;')], [200, true, true]);
+  // ticket: crédito entra pelo app, compra pelo canal, e o CSV leva os dois
+  { const g = await req('GET', '/api/estado', null, ana.j.token); const e = g.j.estado; e.tickets = [{ id: 'ticket-padrao', nome: 'Ticket Alimentação/Refeição', cor: '#0B7A54', upd: Date.now() }]; e.recargas = [{ id: 'r1', ticketId: 'ticket-padrao', data: '2026-11-04', desc: 'Crédito', valor: 800, upd: Date.now() }]; e.lancamentos.push({ id: 't1', tipo: 'gasto', data: '2026-11-04', desc: 'Feira', cat: 'Mercado', valor: 50, pago: true, pagamento: 'Ticket', ticket: true, ticketId: 'ticket-padrao', upd: Date.now() }); await req('PUT', '/api/estado', { estado: e }, ana.j.token);
+    const v = (await req('GET', '/api/estado', null, ana.j.token)).j.estado; confere('sincronização guarda ticket e crédito', [v.tickets.length, v.recargas.length, v.lancamentos.filter((l) => l.ticketId).length], [1, 1, 1]);
+    const c2 = await req('GET', '/api/meus-dados?formato=csv', null, ana.j.token); confere('CSV traz crédito e compra do ticket', [c2.tx.includes('2026-11-04;Crédito no Ticket;Crédito;;800;Ticket'), c2.tx.includes('2026-11-04;Gasto;Feira;Mercado;50;Ticket')], [true, true]); }
   confere('sem login não exporta', (await req('GET', '/api/meus-dados')).s, 401);
 
   const L = (await req('GET', '/api/admin/usuarios', null, T)).j;
@@ -112,6 +116,9 @@ const zapEntra = async (de, texto) => { const corpo = JSON.stringify({ entry: [{
   confere('vencida exclui a conta', (await req('POST', '/api/excluir-conta', { senha: 'Abcdefg1' }, lg.j.token)).s, 200);
   confere('conta sumiu', [(await req('POST', '/api/login', { fone: '16911110000', senha: 'Abcdefg1' })).s, (await req('GET', '/api/eu', null, lg.j.token)).s], [401, 401]);
 
+  // ticket pelo canal: crédito, compra, saldo e resumo
+  zerar(); await telegram({ chat: { id: 777 }, text: 'caiu 800 no ticket' }); await espera(150); await telegram({ chat: { id: 777 }, text: 'gastei 50 no mercado no ticket' }); await espera(150); await telegram({ chat: { id: 777 }, text: 'saldo do ticket' }); await espera(150);
+  { const tx = saida.tg.map((m) => m.text || ''); confere('Telegram: crédito, compra e saldo', [/Saldo: R\$\s800,00/.test(tx[0] || ''), /Saldo: R\$\s750,00/.test(tx[1] || ''), /Saldo: R\$\s750,00/.test(tx[2] || '')], [true, true, true]); }
   // apagar pelo Telegram com o acesso vencido
   await req('POST', '/api/admin/renovar', { k: kBia, validade: d(-5) }, T);
   zerar(); await telegram({ chat: { id: 777 }, text: 'apagar meus dados' }); await espera(200);

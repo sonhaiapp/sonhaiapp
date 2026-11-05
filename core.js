@@ -283,7 +283,7 @@
       }
     }
     delete estado.pendente;
-    const acao = interpretar(texto, { hoje, categorias: estado.categorias, sonhos: estado.sonhos, cartoes: estado.cartoes });
+    const acao = interpretar(texto, { hoje, categorias: estado.categorias, sonhos: estado.sonhos, cartoes: estado.cartoes, tickets: estado.tickets });
     if (acao.tipo === 'excluir') {
       const alvo = acharExclusao(estado, acao);
       if (!alvo.item) return { ok: false, msg: alvo.msg, acao };
@@ -408,11 +408,77 @@
     return ym0;
   }
 
+  // ------------------------------------------------------- ticket (saldo pré-pago)
+  // O crédito entra em estado.recargas e as compras são lançamentos com ticketId.
+  // O saldo é sempre calculado, então celular e WhatsApp nunca brigam por um número.
+  const TICKET_PADRAO = 'ticket-padrao';
+  const NOME_TICKET = 'Ticket Alimentação/Refeição';
+  const COR_TICKET = '#0B7A54';
+  const NAO_BENEFICIO = '(?!\\s+(?:d[oae]s?\\s+)?(?:estacionamento|show|cinema|onibus|metro|trem|pedagio|medio|teatro|jogo|evento|festa|estadio|parque|suporte|atendimento|embarque|aviao|voo|sorteio|bar)\\b)';
+  const COMPLEMENTO_TICKET = '(?:[ /-]+(?:de\\s+)?(?:alimentacao|refeicao)){0,2}';
+  const RE_TICKET = new RegExp('\\b(?:vales?[ -](?:alimentacao|refeicao|ticket|mercado)' + COMPLEMENTO_TICKET + '|cartao[ -](?:de\\s+)?(?:alimentacao|refeicao|ticket|beneficios?)' + COMPLEMENTO_TICKET + '|(?:ticket|tiquete|tiket)s?' + COMPLEMENTO_TICKET + NAO_BENEFICIO + '|alelo|sodexo|pluxee|swile)\\b');
+  const RE_VA_VR = /\b(?:no|na|do|da|de|com|pelo|pela|usando)\s+(?:o\s+|a\s+|meu\s+|minha\s+)?(va|vr)\b/;
+  const COMPRA_TICKET = /\b(gastei|gastamos|gasto|gastar|comprei|compramos|compra|comprar|paguei|pagamos|pagar|despesa|torrei|debitou|saiu|almocei|jantei)\b/;
+  const CREDITO_FORTE = /\b(recarreguei|recarregar|recarrega|recarregue|recarga|carreguei|carregar|carrega|carregue|recebi|recebemos|caiu|cairam|entrou|depositaram|depositei|depositar|creditaram|creditou|creditei|creditar|credite|pingou|veio|vieram|estornou|estornaram|devolveram|devolveu)\b/;
+  const CREDITO_FRACO = /\b(credito|coloquei|colocar|coloca|coloque|botei|botar|bota|adicionei|adicionar|adiciona|adicione|acrescentei|acrescenta|somei)\b/;
+  const PALAVRAS_CREDITO = ['recarreguei', 'recarregar', 'recarrega', 'recarregue', 'recarga', 'carreguei', 'carregar', 'carrega', 'carregue', 'colocar', 'coloca', 'coloque', 'adicionei', 'acrescentei', 'acrescenta', 'somei', 'saldo', 'no valor'];
+  const escRe = (x) => String(x).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  /** Acha o cartão de benefício citado: "no ticket", "vale refeição", "no va", "no alelo" ou o nome cadastrado. */
+  function detectarTicket(t, tickets) {
+    tickets = tickets || [];
+    const marca = t.match(RE_TICKET);
+    const sigla = marca ? null : t.match(RE_VA_VR);
+    const tt = ' ' + t.replace(/\bva\b/g, 'alimentacao').replace(/\bvr\b/g, 'refeicao').replace(/[/-]/g, ' ') + ' ';
+    let melhor = null, tam = 0, trecho = '';
+    for (const c of tickets) {
+      const n = sem(c.nome);
+      const partes = [n].concat(n.split(/[\s/-]+/).filter((p) => p.length > 2 && !['ticket', 'tiquete', 'cartao', 'vale', 'beneficio', 'beneficios'].includes(p)));
+      for (const p of partes) {
+        // nome próprio ("Caju") só conta depois de "no", "com", "do"...: "comprei caju" não é o cartão
+        const achou = marca || sigla ? tt.includes(' ' + p + ' ') : !/^(alimentacao|refeicao)$/.test(p) && new RegExp('\\b(?:no|na|do|da|com|pelo|pela|usando)\\s+(?:o\\s+|a\\s+|meu\\s+|minha\\s+)?(?:cartao\\s+)?' + escRe(p) + '\\b').test(t);
+        if (achou && p.length > tam) { melhor = c; tam = p.length; trecho = p; }
+      }
+    }
+    if (!marca && !sigla && !melhor) return null;
+    trecho = marca ? marca[0] : sigla ? sigla[1] : trecho;
+    if (melhor) return { id: melhor.id, nome: melhor.nome, trecho };
+    if (tickets.length) return { id: tickets[0].id, nome: tickets[0].nome, trecho, generico: tickets.length > 1 };
+    return { novo: true, nome: NOME_TICKET, trecho };
+  }
+  /** Devolve o ticket citado; o primeiro tem id fixo para não duplicar quando dois aparelhos o criam. */
+  function garantirTicket(estado, info) {
+    estado.tickets = estado.tickets || [];
+    if (info && info.id) return estado.tickets.find((c) => c.id === info.id) || null;
+    if (!info || !info.nome || info.nome === NOME_TICKET) { const ja = estado.tickets[0]; if (ja) return ja; }
+    const usado = estado.tickets.some((c) => c.id === TICKET_PADRAO) || (estado.excluidos || []).some((x) => x.id === TICKET_PADRAO);
+    const c = { id: usado ? uid() : TICKET_PADRAO, nome: (info && info.nome) || NOME_TICKET, cor: (info && info.cor) || COR_TICKET, upd: Date.now() };
+    estado.tickets.push(c);
+    return c;
+  }
+  const centavos = (v) => Math.round(v * 100) / 100;
+  const somaValor = (lista) => lista.reduce((a, b) => a + (Number(b.valor) || 0), 0);
+  const recargasDe = (estado, id) => (estado.recargas || []).filter((r) => r.ticketId === id);
+  const comprasTicket = (estado, id) => (estado.lancamentos || []).filter((l) => l.tipo === 'gasto' && l.ticketId === id);
+  function saldoTicket(estado, id) { return centavos(somaValor(recargasDe(estado, id)) - somaValor(comprasTicket(estado, id))); }
+  function gastoTicketMes(estado, id, ym) { return centavos(somaValor(comprasTicket(estado, id).filter((l) => mesDe(l.data) === ym))); }
+  /** Créditos e compras do mês, do mais recente para o mais antigo. */
+  function extratoTicket(estado, id, ym) {
+    const cred = recargasDe(estado, id).filter((r) => mesDe(r.data) === ym).map((r) => ({ tipo: 'credito', item: r }));
+    const comp = comprasTicket(estado, id).filter((l) => mesDe(l.data) === ym).map((l) => ({ tipo: 'compra', item: l }));
+    return cred.concat(comp).sort((a, b) => b.item.data.localeCompare(a.item.data) || (b.item.upd || 0) - (a.item.upd || 0));
+  }
+  /** Tira o cartão: as compras continuam no histórico e os créditos dele saem. */
+  function excluirTicket(estado, id) {
+    for (const l of comprasTicket(estado, id)) { delete l.ticketId; l.upd = Date.now(); }
+    for (const r of recargasDe(estado, id)) remover(estado, 'recargas', r.id);
+    remover(estado, 'tickets', id);
+  }
+
   // -------------------------------------------------------------- interpretar
   /**
    * Transforma uma frase em uma ação.
    * Retorna { tipo, ...dados } — tipos: gasto, entrada, excluir, desfazer, conta, compromisso,
-   * sonho, parcelado, resumo, contas_pendentes, agenda_hoje, ajuda, desconhecido
+   * sonho, parcelado, ticket_credito, ver_ticket, resumo, contas_pendentes, agenda_hoje, ajuda, desconhecido
    */
   function interpretar(frase, opts) {
     opts = opts || {};
@@ -424,7 +490,9 @@
 
     if (/^(oi|ola|bom dia|boa tarde|boa noite|ajuda|menu|comandos|help|inicio|começar|comecar)\b/.test(t) && !extrairValor(t)) return { tipo: 'ajuda' };
     if (/\b(desfaz|desfazer|desfaca|volta o ultimo|cancela o ultimo|apaga o ultimo|exclui o ultimo|exclua o ultimo|remove o ultimo)\b/.test(t) && !/\d/.test(t)) return { tipo: 'desfazer' };
-    if (/\b(quanto (eu )?(ja )?gastei|quanto (me )?(sobrou|sobra|resta)|quanto (eu )?(tenho|posso gastar)|resumo|saldo|como (estou|esta|to|ta)|balanco|extrato|meu mes)\b/.test(t)) return { tipo: 'resumo' };
+    const tk = detectarTicket(t, opts.tickets);
+    if (tk && /\b(saldo|quanto|extrato|como esta|mostra|qual)\b/.test(t) && !(extrairValor(t) && (COMPRA_TICKET.test(t) || CREDITO_FORTE.test(t) || CREDITO_FRACO.test(t)))) return { tipo: 'ver_ticket', ticket: tk };
+    if (!tk && /\b(quanto (eu )?(ja )?gastei|quanto (me )?(sobrou|sobra|resta)|quanto (eu )?(tenho|posso gastar)|resumo|saldo|como (estou|esta|to|ta)|balanco|extrato|meu mes)\b/.test(t)) return { tipo: 'resumo' };
     if (/\b(contas? (a|pra|para) (pagar|vencer)|o que vence|quais contas|contas da semana|contas pendentes|boletos)\b/.test(t) && !extrairValor(t)) return { tipo: 'contas_pendentes' };
     if (/\b(agenda|compromissos? (de )?hoje|meus compromissos|o que tenho hoje)\b/.test(t) && !/\b(marca|marcar|agenda[r]? (uma|um|o|a)|lembra)/.test(t)) return { tipo: 'agenda_hoje' };
 
@@ -454,13 +522,16 @@
     const passadoExcluir = /^(?:cancelei|apaguei|exclui|removi|deletei|estornei|retirei|tirei)\s+(?:o |a |um |uma |aquele |aquela )?(?:gasto|lancamento|compra|entrada|conta|compromisso)\b/.test(t);
     if (pedidoExcluir || passadoExcluir) {
       const termo = limparDescricao(original.replace(/\b(exclu|apag|remov|delet|cancel|tira|retira|estorn)\w*/gi, ''), [val && val.trecho, dt && dt.trecho, 'gasto', 'lancamento', 'lançamento', 'ultimo', 'último']);
-      return { tipo: 'excluir', valor: val ? val.valor : null, termo: sem(termo), data: dt ? dt.data : null, alvo: /compromisso|consulta|reuniao/.test(t) ? 'agenda' : /conta\b|boleto/.test(t) && !val ? 'conta' : 'lancamento' };
+      return { tipo: 'excluir', valor: val ? val.valor : null, termo: sem(termo), data: dt ? dt.data : null, alvo: tk && /\b(credito|recarga)\b/.test(t) ? 'recarga' : /compromisso|consulta|reuniao/.test(t) ? 'agenda' : /conta\b|boleto/.test(t) && !val ? 'conta' : 'lancamento' };
     }
 
     // "cancelei a netflix 40" conta uma novidade, não um gasto
     if (/^(cancelei|cancelamos)\b/.test(t)) return { tipo: 'desconhecido', texto: original };
 
     const fatoFeito = /\b(gastei|gastamos|comprei|compramos|paguei|pagamos|recebi|recebemos|ganhei|ganhamos|guardei|guardamos|juntei|poupei|economizei|investi|abasteci|almocei|jantei|caiu|entrou)\b/;
+
+    // "recebo 800 de ticket todo mês" não é renda fixa nem conta: o crédito é lançado quando cai
+    if (tk && val && /\b(todo mes|todos os meses|todo dia|cada mes|por mes|ao mes|mensal)\b/.test(t) && !fatoFeito.test(t)) return { tipo: 'plano', texto: original, msg: '🎟️ O crédito do Ticket não entra sozinho. Quando cair, me diga: "caiu 800 no ticket". 💙' };
 
     // RENDA FIXA: "meu salário é 5000 todo dia 5", "recebo 3000 por mês"
     const palavraRenda = /\b(salario|renda|aposentadoria|pensao|pro labore|adiantamento|recebo|ganho)\b/;
@@ -483,6 +554,19 @@
     const quer = /\b(vale a pena|sera que|posso|devo|deveria|quero|queremos|queria|gostaria|pretendo|planejo|vou|vamos|preciso|pensando em|penso em|se eu)\b/.test(t);
     const verboPlano = /\b(compr\w*|gast\w*|pag\w*|guard\w*|junt\w*|invest\w*|poup\w*|econom\w*|troc\w*|viaj\w*|parcel\w*)\b/.test(t);
     if (val && !fatoFeito.test(t) && !/\b(vence|vencimento|lembr\w*|agend\w*|boleto)\b/.test(t) && ((quer && verboPlano) || /\?\s*$/.test(original))) return { tipo: 'plano', texto: original };
+
+    // TICKET: crédito sobe o saldo, compra desce. Sem verbo ("mercado 50 no ticket") é compra, como no resto do app.
+    if (tk) {
+      if (!val) return { tipo: 'ver_ticket', ticket: tk, dica: true };
+      const dataTk = dt ? dt.data : iso(hoje);
+      const resto = limparDescricao(original, [val.trecho, dt && dt.trecho, tk.trecho].concat(PALAVRAS_CREDITO));
+      const ehCredito = !COMPRA_TICKET.test(t) && (CREDITO_FORTE.test(t) || (CREDITO_FRACO.test(t) && !resto));
+      if (ehCredito) return { tipo: 'ticket_credito', ticket: tk, valor: val.valor, data: dataTk };
+      const tSemTk = t.replace(tk.trecho, ' ');
+      const catTk = adivinharCategoria(tSemTk, opts.categorias);
+      const descTk = limparDescricao(original, [val.trecho, dt && dt.trecho, tk.trecho, 'paguei', 'pago', 'usando']) || catTk;
+      return { tipo: 'gasto', valor: val.valor, desc: descTk, cat: catTk, data: dataTk, pagamento: 'Ticket', ticket: tk, cartao: null, cartaoSemBanco: false, paguei: false, chave: t };
+    }
 
     // SONHO (guardar / investir / cofrinho)
     const verboGuardar = /\b(guard(ei|ar|e|a|amos)|junt(ei|ar|e|a)|poup(ei|ar|e|a)|economiz(ei|ar)|separ(ei|ar|e|a)|reserv(ei|ar|e)|invest(i|ir|e|a|imos)|deposit(ei|ar|e|a)|apliq(uei)|aplic(ar|a|ou)|cofrinho|caixinha)\b/;
@@ -574,7 +658,7 @@
       versao: 2,
       perfil: { nome: '', whatsapp: '', orcamento: 0, saldoInicial: 0, lembreteHora: '08:00', ticket: false, tema: 'auto', criadoEm: new Date().toISOString() },
       categorias: CATEGORIAS.map((c) => ({ nome: c.nome, emoji: c.emoji, cor: c.cor, limite: 0 })),
-      lancamentos: [], contas: [], rendas: [], parcelados: [], cartoes: [], anuais: [], sonhos: [{ id: uid(), nome: 'Reserva de emergência', emoji: '🛟', custo: 0, prazo: '', guardadoAntes: 0, aportes: [], upd: Date.now() }],
+      lancamentos: [], contas: [], rendas: [], parcelados: [], cartoes: [], tickets: [], recargas: [], anuais: [], sonhos: [{ id: uid(), nome: 'Reserva de emergência', emoji: '🛟', custo: 0, prazo: '', guardadoAntes: 0, aportes: [], upd: Date.now() }],
       dividas: [], agenda: [], excluidos: [], chat: []
     };
   }
@@ -598,14 +682,14 @@
   }
   function sanearEstado(estado) {
     if (!estado || typeof estado !== 'object') return estado;
-    for (const col of ['lancamentos', 'contas', 'rendas', 'parcelados', 'cartoes', 'anuais', 'sonhos', 'dividas', 'agenda', 'categorias']) if (Array.isArray(estado[col])) estado[col].forEach((x) => sanearItem(x));
+    for (const col of ['lancamentos', 'contas', 'rendas', 'parcelados', 'cartoes', 'tickets', 'recargas', 'anuais', 'sonhos', 'dividas', 'agenda', 'categorias']) if (Array.isArray(estado[col])) estado[col].forEach((x) => sanearItem(x));
     if (estado.perfil) sanearItem(estado.perfil);
     if (Array.isArray(estado.chat)) estado.chat = estado.chat.slice(-200).map((m) => ({ de: m.de === 'me' ? 'me' : 'bot', txt: String(m.txt || '').slice(0, 4000), em: +m.em || 0 }));
     return estado;
   }
 
-  const COLS_DESFAZER = ['lancamentos', 'contas', 'rendas', 'parcelados', 'cartoes', 'anuais', 'sonhos', 'dividas', 'agenda'];
-  const DESFAZIVEIS = new Set(['pagar_conta', 'gasto', 'entrada', 'parcelado', 'config_cartao', 'pagar_fatura', 'conta', 'renda_fixa', 'meta_sonho', 'compromisso', 'resgate', 'sonho', 'excluir']);
+  const COLS_DESFAZER = ['lancamentos', 'contas', 'rendas', 'parcelados', 'cartoes', 'tickets', 'recargas', 'anuais', 'sonhos', 'dividas', 'agenda'];
+  const DESFAZIVEIS = new Set(['pagar_conta', 'gasto', 'entrada', 'parcelado', 'config_cartao', 'pagar_fatura', 'conta', 'renda_fixa', 'meta_sonho', 'compromisso', 'resgate', 'sonho', 'excluir', 'ticket_credito']);
   function fotografar(estado) {
     const foto = {};
     for (const col of COLS_DESFAZER) foto[col] = new Map((estado[col] || []).map((x) => [x.id, JSON.stringify(x)]));
@@ -633,6 +717,7 @@
       case 'pagar_fatura': return `pagamento da fatura ${it.nome}`;
       case 'config_cartao': return `ajuste do cartão ${it.nome}`;
       case 'entrada': return `${acao.desc || acao.cat} (${brl(acao.valor)})`;
+      case 'ticket_credito': return `crédito de ${brl(acao.valor)} no Ticket`;
       case 'parcelado': return `${acao.desc} (${acao.n}x de ${brl(acao.valorParcela)})`;
       case 'conta': return `conta ${it.nome}`;
       case 'renda_fixa': return `renda fixa ${it.nome}`;
@@ -695,15 +780,18 @@
           if (c) { c.pagos = c.pagos || {}; c.pagos[ym] = true; if (acao.valor) definirValorConta(c, ym, acao.valor); c.upd = now; return { ok: true, item: c, colecao: 'contas', msg: `✅ Conta *${c.nome}* paga: ${brl(valorConta(c, ym))} em ${nomeMes(ym)}. Uma preocupação a menos! 😌` }; }
         }
         const cc = garantirCartao(estado, acao.cartao);
+        const tkc = acao.ticket ? garantirTicket(estado, acao.ticket) : null;
         const item = { id: uid(), tipo: 'gasto', data: acao.data, desc: acao.desc, cat: acao.cat, valor: acao.valor, pago: !cc && acao.pagamento !== 'Cartão', pagamento: cc ? 'Cartão' : (acao.pagamento || ''), cartaoId: cc ? cc.id : undefined, origem, upd: now };
+        if (tkc) { item.ticket = true; item.ticketId = tkc.id; }
         estado.lancamentos.push(item);
         let txtCartao = '';
-        if (cc) { const f = fatura(estado, cc.id, mesFatura(cc, acao.data), hoje); txtCartao = `\n💳 Lançado no cartão *${cc.nome}* — fatura que vence em ${dataBR(f.venc)}: ${brl(f.total)}.`; if (acao.cartao.novo) txtCartao += `\n💡 Para acertar as datas, me diga: "a fatura do ${cc.nome} vence dia 10 e fecha dia 3".`; }
+        if (tkc) { const sd = saldoTicket(estado, tkc.id); txtCartao = `\n🎟️ Pago no *${tkc.nome}*. Saldo: ${brl(sd)}.` + (sd < 0 ? '\n⚠️ O saldo ficou negativo. Se já caiu crédito, me diga: "caiu 800 no ticket".' : ''); }
+        else if (cc) { const f = fatura(estado, cc.id, mesFatura(cc, acao.data), hoje); txtCartao = `\n💳 Lançado no cartão *${cc.nome}* — fatura que vence em ${dataBR(f.venc)}: ${brl(f.total)}.`; if (acao.cartao.novo) txtCartao += `\n💡 Para acertar as datas, me diga: "a fatura do ${cc.nome} vence dia 10 e fecha dia 3".`; }
         else if (acao.pagamento && acao.pagamento !== 'Cartão') txtCartao = `\n✅ Pago no ${acao.pagamento === 'Dinheiro' ? 'dinheiro' : acao.pagamento} — já saiu do seu saldo do mês.`;
         else if (acao.cartaoSemBanco) txtCartao = (estado.cartoes || []).length ? `\n💳 Em qual cartão? Diga, por ex.: "no cartão ${(estado.cartoes[0] || {}).nome}".` : '\n💳 Dica: diga o banco ("cartão de crédito Itaú") que eu separo por cartão.';
         const r = resumoMes(estado, mesDe(acao.data));
         let extra = '';
-        if (r.orcamento > 0) {
+        if (r.orcamento > 0 && !tkc) {
           if (r.pctOrcamento >= 1) extra = `\n⚠️ Atenção: você passou do orçamento do mês (${Math.round(r.pctOrcamento * 100)}%). Vamos segurar um pouquinho? 💛`;
           else if (r.pctOrcamento >= 0.85) extra = `\n🟡 Você já usou ${Math.round(r.pctOrcamento * 100)}% do orçamento. Faltam ${brl(r.orcamento - r.gastoTotal)}.`;
           else extra = `\n✅ Orçamento sob controle: ${Math.round(r.pctOrcamento * 100)}% usado.`;
@@ -729,6 +817,22 @@
         const item = { id: uid(), tipo: 'entrada', data: acao.data, desc: acao.desc, cat: acao.cat, valor: acao.valor, pago: true, origem, upd: now };
         estado.lancamentos.push(item);
         return { ok: true, item, colecao: 'lancamentos', msg: `💰 Que notícia boa${nomeP ? ', ' + nomeP : ''}! Entrada de ${brl(acao.valor)} (${acao.cat}) registrada.` };
+      }
+      case 'ticket_credito': {
+        const tkc = garantirTicket(estado, acao.ticket);
+        if (!tkc) return { ok: false, msg: 'Não encontrei esse cartão. Confere pra mim? 🤔' };
+        const item = { id: uid(), ticketId: tkc.id, data: acao.data || iso(hoje), desc: 'Crédito', valor: acao.valor, origem, upd: now };
+        estado.recargas = estado.recargas || [];
+        estado.recargas.push(item);
+        return { ok: true, item, colecao: 'recargas', msg: `🎟️ Crédito de ${brl(acao.valor)} no *${tkc.nome}*!\nSaldo: ${brl(saldoTicket(estado, tkc.id))}. 💙` };
+      }
+      case 'ver_ticket': {
+        const lista = estado.tickets || [];
+        if (!lista.length) return { ok: true, msg: '🎟️ Seu Ticket ainda não tem crédito. Quando cair, me diga: "caiu 800 no ticket". 💙' };
+        const ymT = mesDe(iso(hoje));
+        const umSo = acao.ticket && acao.ticket.id && !acao.ticket.generico ? lista.filter((c) => c.id === acao.ticket.id) : lista;
+        const linhas = umSo.map((c) => `🎟️ *${c.nome}*\nSaldo: ${brl(saldoTicket(estado, c.id))}\nGasto em ${nomeMes(ymT)}: ${brl(gastoTicketMes(estado, c.id, ymT))}`).join('\n\n');
+        return { ok: true, msg: linhas + (acao.dica ? '\n\nPara lançar, me diga: "caiu 800 no ticket" ou "gastei 50 no mercado no ticket".' : '') };
       }
       case 'parcelado': {
         const cc = garantirCartao(estado, acao.cartao);
@@ -791,7 +895,7 @@
         else { s = { id: uid(), nome: acao.nome, emoji: '⭐', custo: acao.valor, prazo: '', guardadoAntes: 0, aportes: [], upd: now }; estado.sonhos.push(s); criado = true; }
         return { ok: true, item: s, colecao: 'sonhos', msg: `🌈 ${criado ? 'Sonho criado' : 'Meta atualizada'}: *${s.nome}*, ${brl(acao.valor)}. Quando guardar, me diga: "guardei 200 para ${s.nome.toLowerCase()}". ⭐` };
       }
-      case 'plano': return { ok: true, msg: '💭 Entendi isso como um plano ou uma pergunta, então não lancei nada.\nQuando acontecer, me diga: "comprei ...", "paguei ..." ou "guardei ...".' };
+      case 'plano': return { ok: true, msg: acao.msg || '💭 Entendi isso como um plano ou uma pergunta, então não lancei nada.\nQuando acontecer, me diga: "comprei ...", "paguei ..." ou "guardei ...".' };
       case 'compromisso': {
         const item = { id: uid(), titulo: acao.titulo, data: acao.data, hora: acao.hora || '', lembrar: true, feito: false, origem, upd: now };
         estado.agenda.push(item);
@@ -835,6 +939,7 @@
         if (alvo.col === 'contas') { encerrarConta(estado, alvo.item.id, mesDe(iso(hoje))); return { ok: true, removido: alvo.item, colecao: 'contas', msg: `🗑️ Conta *${alvo.item.nome}* encerrada. Os meses anteriores continuam no seu histórico.` }; }
         remover(estado, alvo.col, alvo.item.id);
         if (alvo.col === 'agenda') return { ok: true, removido: alvo.item, colecao: 'agenda', msg: `🗑️ Compromisso *${alvo.item.titulo}* removido.` };
+        if (alvo.col === 'recargas') return { ok: true, removido: alvo.item, colecao: 'recargas', msg: `🗑️ Prontinho! Excluí o crédito de ${brl(alvo.item.valor)} do Ticket. Saldo: ${brl(saldoTicket(estado, alvo.item.ticketId))}.` };
         const l = alvo.item;
         return { ok: true, removido: l, colecao: 'lancamentos', msg: `🗑️ Prontinho! Excluí ${l.tipo === 'entrada' ? 'a entrada' : 'o gasto'} de ${brl(l.valor)} (${l.desc || l.cat}, ${dataBR(l.data)}).` };
       }
@@ -869,6 +974,13 @@
       const a = cand.sort((x, y) => (y.upd || 0) - (x.upd || 0))[0];
       return a ? { col: 'agenda', item: a } : { msg: 'Não encontrei esse compromisso. 🤔' };
     }
+    if (acao.alvo === 'recarga') {
+      let cand = (estado.recargas || []).slice();
+      if (acao.valor != null) cand = cand.filter((r) => Math.abs(r.valor - acao.valor) < 0.005);
+      if (acao.data) cand = cand.filter((r) => r.data === acao.data);
+      const r = cand.sort((a, b) => (b.upd || 0) - (a.upd || 0))[0];
+      return r ? { col: 'recargas', item: r } : { msg: `Não encontrei esse crédito do Ticket${acao.valor != null ? ' de ' + brl(acao.valor) : ''}. Confere pra mim? 🤔` };
+    }
     if (acao.alvo === 'conta') {
       const c = estado.contas.find((x) => acao.termo && contaNoMes(x, mesDe(iso(new Date()))) && acao.termo.split(' ').some((p) => p.length > 2 && sem(x.nome).includes(p)));
       return c ? { col: 'contas', item: c } : { msg: 'Não encontrei essa conta. 🤔' };
@@ -878,7 +990,7 @@
     if (acao.valor != null) cand = cand.filter((l) => Math.abs(l.valor - acao.valor) < 0.005);
     if (acao.data) cand = cand.filter((l) => l.data === acao.data);
     if (termos.length) {
-      const c2 = cand.filter((l) => termos.some((p) => sem(l.desc + ' ' + l.cat).includes(p)));
+      const c2 = cand.filter((l) => termos.some((p) => sem(l.desc + ' ' + l.cat + (l.ticket ? ' ticket vale alimentacao refeicao' : '')).includes(p)));
       if (c2.length || acao.valor == null) cand = c2;
     }
     if (!cand.length) return { msg: `Não encontrei esse lançamento${acao.valor != null ? ' de ' + brl(acao.valor) : ''}. Confere pra mim? 🤔` };
@@ -888,6 +1000,7 @@
     const x = alvo.item;
     if (alvo.col === 'agenda') return `o compromisso *${x.titulo}*`;
     if (alvo.col === 'contas') return `a conta *${x.nome}*`;
+    if (alvo.col === 'recargas') return `o crédito de ${brl(x.valor)} do Ticket (${dataBR(x.data)})`;
     return `${x.tipo === 'entrada' ? 'a entrada' : 'o gasto'} de ${brl(x.valor)} (${x.desc || x.cat}, ${dataBR(x.data)})`;
   }
   function rotuloFatura(f) { return { paga: '✅ Paga', parcial: '🟡 Paga parcialmente', vencida: '🔴 Vencida', aberta: '⏳ Em aberto', vazia: 'Sem compras' }[f.situacao]; }
@@ -1078,6 +1191,7 @@
     const r = resumoMes(estado, ym);
     const nome = estado.perfil && estado.perfil.nome ? estado.perfil.nome : '';
     let s = `📊 *Resumo de ${nomeMes(ym)}*${nome ? ' — ' + nome : ''}\n\n💰 Entrou: ${brl(r.entradasReais)}${r.previsto ? `\n   • Ainda vai cair: ${brl(r.previsto)}` : ''}\n🛒 Gastos: ${brl(r.gastoTotal)}\n   • Contas fixas: ${brl(r.fixas)}\n   • Dia a dia: ${brl(r.gastosDia)}\n   • Parcelas: ${brl(r.parcelas)}\n⭐ Guardei p/ sonhos: ${brl(r.guardado)}\n✅ Sobrou: ${brl(r.sobra)}`;
+    for (const c of estado.tickets || []) s += `\n🎟️ ${c.nome}: saldo ${brl(saldoTicket(estado, c.id))} · gastei ${brl(gastoTicketMes(estado, c.id, ym))}`;
     if (r.maiorCategoria) s += `\n🔝 Maior gasto: ${r.maiorCategoria.nome} (${brl(r.maiorCategoria.valor)})`;
     if (r.orcamento > 0) s += `\n\n${barra(r.pctOrcamento)} ${Math.round(r.pctOrcamento * 100)}% do orçamento`;
     s += '\n\n' + mensagemHumor(r);
@@ -1101,7 +1215,7 @@
   }
   function textoAjuda(estado) {
     const n = estado.perfil && estado.perfil.nome ? ', ' + estado.perfil.nome.split(' ')[0] : '';
-    return `Oi${n}! 💙 Eu sou o *Sonhaí*, seu parceiro das finanças.\n\nVocê pode me mandar texto ou áudio:\n🛒 "gastei 45,90 no mercado"\n💰 "recebi 3500 de salário"\n🔁 "meu salário é 3500 todo dia 5"\n🛍️ "comprei uma TV de 2000 em 10x no cartão Nubank"\n💳 "gastei 10 na lanchonete no cartão de crédito Itaú"\n💳 "paguei a fatura do Itaú" • "paguei 500 da fatura do Bradesco"\n🗓️ "conta de luz vence dia 10, 150 reais"\n📌 "dentista quinta às 14h"\n⭐ "guardei 200 para a viagem" • "investi 500"\n🌈 "meta de 10000 para o carro"\n💸 "retire 500 da reserva de emergência e coloque como renda"\n🔁 "transfere 300 da reserva para a viagem"\n🗑️ "exclui o gasto de 45,90"\n↩️ "desfazer"\n📊 "resumo" • "contas a pagar" • "agenda"`;
+    return `Oi${n}! 💙 Eu sou o *Sonhaí*, seu parceiro das finanças.\n\nVocê pode me mandar texto ou áudio:\n🛒 "gastei 45,90 no mercado"\n💰 "recebi 3500 de salário"\n🔁 "meu salário é 3500 todo dia 5"\n🛍️ "comprei uma TV de 2000 em 10x no cartão Nubank"\n💳 "gastei 10 na lanchonete no cartão de crédito Itaú"\n💳 "paguei a fatura do Itaú" • "paguei 500 da fatura do Bradesco"\n🎟️ "caiu 800 no ticket" • "gastei 50 no mercado no ticket" • "saldo do ticket"\n🗓️ "conta de luz vence dia 10, 150 reais"\n📌 "dentista quinta às 14h"\n⭐ "guardei 200 para a viagem" • "investi 500"\n🌈 "meta de 10000 para o carro"\n💸 "retire 500 da reserva de emergência e coloque como renda"\n🔁 "transfere 300 da reserva para a viagem"\n🗑️ "exclui o gasto de 45,90"\n↩️ "desfazer"\n📊 "resumo" • "contas a pagar" • "agenda"`;
   }
   function barra(p) { const n = Math.max(0, Math.min(10, Math.round(p * 10))); return '🟩'.repeat(Math.min(n, 7)) + (n > 7 ? '🟨'.repeat(Math.min(n - 7, 2)) : '') + (n > 9 ? '🟥' : '') + '⬜'.repeat(10 - n); }
   function mensagemHumor(r) {
@@ -1166,7 +1280,7 @@
   }
 
   // ---------------------------------------------------------------- mesclagem
-  const COLECOES = ['lancamentos', 'contas', 'rendas', 'parcelados', 'cartoes', 'anuais', 'sonhos', 'dividas', 'agenda', 'categorias'];
+  const COLECOES = ['lancamentos', 'contas', 'rendas', 'parcelados', 'cartoes', 'tickets', 'recargas', 'anuais', 'sonhos', 'dividas', 'agenda', 'categorias'];
   /** Junta dois estados (celular e servidor) sem perder o que veio do WhatsApp. */
   function mesclar(a, b) {
     if (!a) return b; if (!b) return a;
@@ -1190,6 +1304,7 @@
   return {
     CATEGORIAS, TIPOS_ENTRADA, INCENTIVOS, MESES, sem, uid, iso, pad, brl, dataBR, mesDe, nomeMes, mesCurto, somaMes, difMeses, diasNoMes, agora,
     VERSICULOS, versiculoDoDia, LIMITE_VALOR, LIMITE_TEXTO, sanearEstado, BANCOS, detectarCartao, garantirCartao, mesFatura, diaFechamento, vencFatura, fatura, pagarFatura, faturasAVencer, faturaDaVez, rotuloFatura,
+    NOME_TICKET, COR_TICKET, detectarTicket, garantirTicket, saldoTicket, gastoTicketMes, extratoTicket, excluirTicket,
     conversar, interpretar, aplicar, remover, acharExclusao, descreverAlvo, valorConta, definirValorConta, encerrarConta, garantirRendas, acharSonho, retirarDoSonho, estadoVazio, resumoMes, mesesComDados, parcelaNoMes, contaNoMes, contasAVencer, contasAtrasadas, totalSonho,
     textoResumo, textoContas, textoAgenda, textoAjuda, mensagemHumor, barra, mesclar, adivinharCategoria, extrairValor, extrairData, extrairHora
   };

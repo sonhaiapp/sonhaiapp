@@ -60,8 +60,8 @@ confere('meta do carro', [le('meta de 10000 para o carro').tipo, le('meta de 100
 confere('quero juntar', le('quero juntar 8000 para a viagem').tipo, 'meta_sonho');
 confere('cancelei a netflix não lança nada', le('cancelei a netflix 40').tipo, 'desconhecido');
 for (const f of ['exclui o gasto de 45,90', 'apaga o gasto do restaurante', 'pode excluir o gasto de 50', 'remove a conta de luz', 'cancela o compromisso do dentista', 'tira o gasto de 45']) confere(f, le(f).tipo, 'excluir');
-for (const [f, t] of [['conta de luz vence dia 10, 150 reais', 'conta'], ['conta de água vence dia 17, 90 reais', 'conta'], ['boleto da escola 500 dia 10', 'conta'], ['conta de internet todo dia 15 110 reais', 'conta'], ['mensalidade da escola 900 dia 8', 'conta'], ['me lembra de pagar o boleto amanhã', 'compromisso'], ['dentista quinta às 14h', 'compromisso'], ['guardei 200 para a viagem', 'sonho'], ['investi 500', 'sonho'], ['reservei 500 para a viagem', 'sonho'], ['recebi 5000 de salário', 'entrada'], ['ganhei 100 de presente', 'entrada'], ['recebi 800 de vale alimentação', 'entrada'], ['paguei a fatura do Itaú', 'pagar_fatura'], ['a fatura do Itaú vence dia 10 e fecha dia 3', 'config_cartao'], ['resumo', 'resumo'], ['contas a pagar', 'contas_pendentes'], ['agenda', 'agenda_hoje'], ['desfazer', 'desfazer'], ['quanto sobrou', 'resumo'], ['quanto posso gastar', 'resumo'], ['oi', 'ajuda']]) confere(f, le(f).tipo, t);
-confere('vale alimentação não é adiantamento', le('recebi 800 de vale alimentação').cat, 'Outra renda');
+for (const [f, t] of [['conta de luz vence dia 10, 150 reais', 'conta'], ['conta de água vence dia 17, 90 reais', 'conta'], ['boleto da escola 500 dia 10', 'conta'], ['conta de internet todo dia 15 110 reais', 'conta'], ['mensalidade da escola 900 dia 8', 'conta'], ['me lembra de pagar o boleto amanhã', 'compromisso'], ['dentista quinta às 14h', 'compromisso'], ['guardei 200 para a viagem', 'sonho'], ['investi 500', 'sonho'], ['reservei 500 para a viagem', 'sonho'], ['recebi 5000 de salário', 'entrada'], ['ganhei 100 de presente', 'entrada'], ['recebi 800 de vale alimentação', 'ticket_credito'], ['paguei a fatura do Itaú', 'pagar_fatura'], ['a fatura do Itaú vence dia 10 e fecha dia 3', 'config_cartao'], ['resumo', 'resumo'], ['contas a pagar', 'contas_pendentes'], ['agenda', 'agenda_hoje'], ['desfazer', 'desfazer'], ['quanto sobrou', 'resumo'], ['quanto posso gastar', 'resumo'], ['oi', 'ajuda']]) confere(f, le(f).tipo, t);
+confere('vale sozinho continua sendo adiantamento', le('recebi 500 de vale').cat, 'Adiantamento');
 confere('frases do guia', ['retire 500 da reserva de emergência e coloque como renda', 'transfere 300 da reserva para a viagem'].map((f) => CC.interpretar(f, { hoje: quarta, sonhos: [{ id: '1', nome: 'Reserva de emergência' }, { id: '2', nome: 'Viagem' }] }).tipo), ['resgate', 'resgate']);
 
 // ---------------------------------------------------------------- exclusão com confirmação
@@ -110,6 +110,49 @@ const dia1 = new Date(2026, 11, 1, 9, 0);
 { const e = novo(); fala(e, 'meu salário é 5000 todo dia 5', new Date(2026, 11, 6)); confere('lançou', e.lancamentos.length, 1); CC.remover(e, 'lancamentos', e.lancamentos[0].id); CC.garantirRendas(e, new Date(2026, 11, 7)); confere('excluída não volta', [e.lancamentos.length, CC.resumoMes(e, '2026-12').previsto], [0, 0]); }
 { const a = novo(); fala(a, 'meu salário é 5000 todo dia 5', dia1); const b = JSON.parse(JSON.stringify(a)); const d5 = new Date(2026, 11, 5, 9, 0); CC.garantirRendas(a, d5); CC.garantirRendas(b, d5); const m = CC.mesclar(a, b); confere('celular e servidor não duplicam', m.lancamentos.length, 1); }
 
+// ---------------------------------------------------------------- ticket alimentação/refeição
+for (const f of ['coloquei 800 no ticket', 'recarreguei 650,50 no vale alimentação', 'caiu 800 no ticket', 'recebi 800 de vale alimentação', 'caiu o vale refeição 450', 'entrou 1200 no cartão alimentação', 'crédito de 800 no ticket', 'coloca 800 no ticket', 'oitocentos reais de crédito no ticket', 'recebi 700 no alelo', 'tíquete 800 de crédito', 'coloquei 800 no vale-alimentação', 'caiu 800 no ticket alimentação/refeição', 'coloquei 300 de saldo no ticket']) confere('crédito: ' + f, le(f).tipo, 'ticket_credito');
+for (const [f, c] of [['gastei 50 no mercado no ticket', 'Mercado'], ['almoço 32 no vale refeição', 'Restaurante/Lanche'], ['paguei 120 com o ticket no assaí', 'Mercado'], ['mercado 200 no cartão alimentação', 'Mercado'], ['almocei 30 no vr', 'Restaurante/Lanche'], ['comprei pão 15 no va', 'Padaria'], ['padaria 12,50 no alelo', 'Padaria'], ['coloquei 100 de gasolina no ticket', 'Combustível'], ['paguei 60 no ticket restaurante', 'Restaurante/Lanche']]) { const a = le(f); confere('compra: ' + f, [a.tipo, a.cat, !!a.ticket, a.pagamento, a.paguei], ['gasto', c, true, 'Ticket', false]); }
+for (const f of ['saldo do ticket', 'quanto tem no ticket', 'quanto tenho no vale alimentação', 'quanto gastei no ticket', 'qual o saldo do vr', 'ticket']) confere('saldo: ' + f, le(f).tipo, 'ver_ticket');
+confere('ticket do estacionamento não é o cartão', [le('paguei 20 no ticket do estacionamento').tipo, !!le('paguei 20 no ticket do estacionamento').ticket], ['gasto', false]);
+confere('plano no ticket não lança', [le('vou gastar 100 no ticket').tipo, le('posso gastar 100 no ticket?').tipo], ['plano', 'plano']);
+confere('resumo continua sendo resumo', [le('saldo').tipo, le('quanto gastei').tipo], ['resumo', 'resumo']);
+confere('crédito mensal não vira renda fixa', le('recebo 800 de ticket todo mês').tipo, 'plano');
+{ const e = novo(); const saldo = () => CC.saldoTicket(e, e.tickets[0].id);
+  fala(e, 'caiu 800 no ticket'); confere('crédito sobe o saldo', [e.tickets.length, e.tickets[0].nome, saldo()], [1, CC.NOME_TICKET, 800]);
+  const r1 = fala(e, 'gastei 50,25 no mercado no ticket'); confere('compra desce o saldo', saldo(), 749.75); confere('compra avisa o saldo', r1.msg.includes('Saldo: R$ 749,75'), true);
+  fala(e, 'almoço 49,75 no vale refeição'); confere('toda frase cai no mesmo cartão', [e.tickets.length, saldo()], [1, 700]);
+  fala(e, 'recarreguei 100 no ticket'); confere('novo crédito soma', saldo(), 800);
+  const m = CC.resumoMes(e, '2026-11');
+  confere('ticket fica fora do saldo do mês', [m.entradas, m.gastoTotal, m.sobra, m.ticketGasto], [0, 0, 0, 100]);
+  confere('compra aparece nas categorias', m.porCategoria.Mercado, 50.25);
+  confere('resumo mostra o ticket', CC.textoResumo(e, '2026-11', quarta).includes('saldo R$ 800,00'), true);
+  fala(e, 'gastei 50 no mercado no ticket'); fala(e, 'desfazer'); confere('desfazer compra devolve o saldo', saldo(), 800);
+  fala(e, 'caiu 200 no ticket'); fala(e, 'desfazer'); confere('desfazer crédito tira do saldo', saldo(), 800);
+  fala(e, 'exclui o crédito de 100 do ticket'); confere('exclusão de crédito pede confirmação', [saldo(), e.pendente.tipo], [800, 'excluir']); fala(e, 'sim'); confere('crédito excluído', saldo(), 700);
+  fala(e, 'desfazer'); confere('desfazer exclusão de crédito', saldo(), 800);
+  fala(e, 'exclui o gasto de 50,25 do ticket'); fala(e, 'sim'); confere('compra excluída devolve o saldo', saldo(), 850.25);
+  const r2 = fala(e, 'mercado 1000 no ticket'); confere('saldo negativo é avisado', [saldo(), r2.msg.includes('negativo')], [-149.75, true]);
+  CC.sanearEstado(e); confere('saneamento mantém o ticket', saldo(), -149.75);
+}
+{ const e = novo(); fala(e, 'gastei 30 no mercado no ticket'); confere('compra antes do crédito cria o cartão', CC.saldoTicket(e, e.tickets[0].id), -30);
+  const f = CC.fatura(e, 'x', '2026-11', quarta); confere('ticket não tem fatura', [f, CC.faturasAVencer(e, quarta, 40).length], [null, 0]);
+  fala(e, 'gastei 20 no cartão'); confere('"no cartão" não vai para o ticket', e.lancamentos.filter((l) => l.ticketId).length, 1);
+  confere('fatura com só ticket não acha cartão', fala(e, 'quanto está a fatura').msg.includes('ainda não tem cartões'), true); }
+{ const e = novo(); e.lancamentos.push({ id: 'velho', tipo: 'gasto', data: '2026-10-01', desc: 'Antigo', cat: 'Mercado', valor: 300, ticket: true, pagamento: 'Ticket', upd: 1 }); fala(e, 'caiu 800 no ticket'); confere('compra antiga no Ticket/VA não desconta do novo saldo', CC.saldoTicket(e, e.tickets[0].id), 800); }
+{ const e = novo(); delete e.tickets; delete e.recargas; fala(e, 'caiu 800 no ticket'); fala(e, 'mercado 100 no ticket'); confere('backup antigo, sem ticket, funciona', CC.saldoTicket(e, e.tickets[0].id), 700); }
+{ const a = novo(), b = JSON.parse(JSON.stringify(a)); fala(a, 'caiu 100 no ticket'); fala(b, 'caiu 300 no ticket');
+  const m = CC.mesclar(a, b); confere('dois aparelhos: não duplica o cartão e não perde crédito', [m.tickets.length, CC.saldoTicket(m, m.tickets[0].id)], [1, 400]);
+  const v = CC.mesclar(m, { lancamentos: [], excluidos: [] }); confere('mesclagem mantém o ticket', v.recargas.length, 2); }
+{ const e = novo(); fala(e, 'caiu 800 no ticket'); fala(e, 'gastei 50 no mercado no ticket'); const id = e.tickets[0].id; CC.excluirTicket(e, id);
+  confere('excluir o cartão tira os créditos e mantém as compras fora do mês', [e.tickets.length, e.recargas.length, e.lancamentos.length, CC.resumoMes(e, '2026-11').gastoTotal], [0, 0, 1, 0]);
+  fala(e, 'caiu 90 no ticket'); const m = CC.mesclar(e, JSON.parse(JSON.stringify(e))); confere('depois de excluído, um novo cartão sobrevive à sincronização', [m.tickets.length, CC.saldoTicket(m, m.tickets[0].id)], [1, 90]); }
+{ const e = novo(); const va = CC.garantirTicket(e, { nome: 'Vale Alimentação' }), vr = CC.garantirTicket(e, { nome: 'Vale Refeição' }), cj = CC.garantirTicket(e, { nome: 'Caju' });
+  fala(e, 'caiu 500 no vale alimentação'); fala(e, 'caiu 400 no vale refeição'); fala(e, 'caiu 300 no caju'); fala(e, 'almoço 40 no vr'); fala(e, 'mercado 60 no va'); fala(e, 'padaria 10 com o caju');
+  confere('cada frase vai para o cartão certo', [va, vr, cj].map((c) => CC.saldoTicket(e, c.id)), [440, 360, 290]);
+  fala(e, 'comprei caju 5'); confere('fruta não é o cartão Caju', CC.saldoTicket(e, cj.id), 290);
+  confere('saldo genérico mostra todos', fala(e, 'saldo do ticket').msg.split('🎟️').length, 4); }
+{ const e = novo(); fala(e, 'caiu 800 no ticket'); fala(e, 'gastei 50 no mercado no ticket'); const x = CC.extratoTicket(e, e.tickets[0].id, '2026-11'); confere('extrato traz crédito e compra', x.map((m) => m.tipo).sort(), ['compra', 'credito']); confere('extrato de outro mês vazio', CC.extratoTicket(e, e.tickets[0].id, '2026-12').length, 0); }
 // ---------------------------------------------------------------- frases do guia continuam funcionando
 { const e = novo(); for (const f of ['gastei 45,90 no mercado', 'gastei 10 na lanchonete no cartão de crédito Itaú', 'comprei uma TV de 2000 em 10x no cartão Nubank', 'a fatura do Itaú vence dia 10 e fecha dia 3', 'quanto está a fatura do Itaú', 'paguei a fatura do Itaú', 'paguei 130 de luz', 'recebi 5000 de salário', 'conta de água vence dia 17, 90 reais', 'dentista quinta às 14h', 'guardei 200 para a viagem', 'transfere 100 da viagem para a reserva', 'exclui o gasto de 45,90', 'sim', 'desfazer', 'resumo', 'contas a pagar', 'agenda']) { const r = fala(e, f); if (!r.ok && !r.pergunta) { falhas++; console.log('❌ guia: ' + f + ' → ' + r.msg); } else ok++; } }
 

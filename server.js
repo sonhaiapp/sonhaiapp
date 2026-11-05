@@ -624,6 +624,7 @@ function csvDaConta(u) {
   const L = (u.estado.lancamentos || []).slice().sort((a, b) => String(a.data).localeCompare(String(b.data)));
   const linhas = [['Data', 'Tipo', 'Descrição', 'Categoria', 'Valor', 'Pagamento'].join(';')];
   for (const l of L) linhas.push([l.data, l.tipo === 'entrada' ? 'Entrada' : 'Gasto', l.desc, l.cat, String(Number(l.valor) || 0).replace('.', ','), l.pagamento || ''].map(csvCampo).join(';'));
+  for (const r of u.estado.recargas || []) linhas.push([r.data, 'Cr\u00e9dito no Ticket', r.desc || 'Cr\u00e9dito', '', String(Number(r.valor) || 0).replace('.', ','), 'Ticket'].map(csvCampo).join(';'));
   return '\ufeff' + linhas.join('\r\n');
 }
 const servidor = http.createServer(async (req, res) => {
