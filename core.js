@@ -417,13 +417,38 @@
     const m = v > diaFechamento(cartao) ? ym : somaMes(ym, 1);
     return m + '-' + pad(Math.min(v, diasNoMes(m)));
   }
+  /** Primeira fatura do cartão que ainda não tinha vencido na data informada. */
+  function primeiraFaturaAberta(cartao, quando) {
+    const d = iso(quando instanceof Date ? quando : new Date(quando));
+    const ym0 = mesDe(d);
+    for (const k of [-1, 0, 1, 2]) { const ym = somaMes(ym0, k); if (vencFatura(cartao, ym) >= d) return ym; }
+    return ym0;
+  }
+  /**
+   * A partir de qual fatura a parcelada é cobrada no cartão.
+   * Parcelas de faturas que já tinham vencido quando a compra foi ligada ao cartão ficam fora:
+   * a pessoa já pagou essas faturas fora do app. Sem o registro (dados antigos), usa a data da última alteração.
+   */
+  function parcelaDesde(p, cartao) {
+    if (/^\d{4}-\d{2}$/.test(p.cartaoDesde || '')) return p.cartaoDesde;
+    return cartao && +p.upd ? primeiraFaturaAberta(cartao, new Date(+p.upd)) : p.inicio;
+  }
+  /** Liga (ou desliga) a parcelada a um cartão, guardando a partir de qual fatura ela entra. */
+  function ligarCartaoParcelado(estado, p, cartaoId, hoje) {
+    cartaoId = cartaoId || undefined;
+    const c = cartaoId ? (estado.cartoes || []).find((x) => x.id === cartaoId) : null;
+    if (!c) { p.cartaoId = undefined; delete p.cartaoDesde; return; }
+    if (p.cartaoId === cartaoId) { if (!p.cartaoDesde) p.cartaoDesde = parcelaDesde(p, c); return; }
+    p.cartaoId = cartaoId;
+    p.cartaoDesde = primeiraFaturaAberta(c, hoje || new Date());
+  }
   /** Fatura de um cartão num mês: compras, parcelas, restante anterior, total, pago, situação. */
   function fatura(estado, cartaoId, ym, hoje, prof) {
     prof = prof || 0;
     const c = (estado.cartoes || []).find((x) => x.id === cartaoId);
     if (!c) return null;
     const compras = (estado.lancamentos || []).filter((l) => l.tipo === 'gasto' && l.cartaoId === cartaoId && mesFatura(c, l.data) === ym);
-    const parcelas = (estado.parcelados || []).filter((p) => p.cartaoId === cartaoId).map((p) => ({ p, k: parcelaNoMes(p, ym) })).filter((x) => x.k);
+    const parcelas = (estado.parcelados || []).filter((p) => p.cartaoId === cartaoId && ym >= parcelaDesde(p, c)).map((p) => ({ p, k: parcelaNoMes(p, ym) })).filter((x) => x.k);
     let anterior = 0;
     if (prof < 12) { const fa = fatura(estado, cartaoId, somaMes(ym, -1), hoje, prof + 1); if (fa && fa.situacao === 'parcial') anterior = fa.falta; }
     const total = Math.round((compras.reduce((a, b) => a + b.valor, 0) + parcelas.reduce((a, b) => a + b.p.valor, 0) + anterior) * 100) / 100;
@@ -780,6 +805,11 @@
     for (const a of estado.agenda) if (a.hora && !/^\d{2}:\d{2}$/.test(a.hora)) a.hora = '';
     for (const x of estado.sonhos) { x.emoji = limpaEmoji(x.emoji); if (!Array.isArray(x.aportes)) x.aportes = []; }
     for (const x of estado.cartoes) x.cor = corValida(x.cor, '#1B3A6B');
+    for (const x of estado.parcelados) {
+      const c = x.cartaoId && estado.cartoes.find((k) => k.id === x.cartaoId);
+      if (!c) delete x.cartaoDesde;
+      else if (!/^\d{4}-\d{2}$/.test(x.cartaoDesde || '')) x.cartaoDesde = parcelaDesde(Object.assign({}, x, { cartaoDesde: '' }), c);
+    }
     for (const x of estado.tickets) x.cor = corValida(x.cor, COR_TICKET);
     sanearItem(pf);
     if (Array.isArray(estado.chat)) estado.chat = estado.chat.slice(-200).map((m) => ({ de: m.de === 'me' ? 'me' : 'bot', txt: String(m.txt || '').slice(0, 4000), em: +m.em || 0 }));
@@ -936,7 +966,8 @@
       case 'parcelado': {
         const cc = garantirCartao(estado, acao.cartao);
         const inicio = cc && acao.data ? mesFatura(cc, acao.data) : acao.inicio;
-        const item = { id: uid(), desc: acao.desc, cat: acao.cat, valor: acao.valorParcela, n: acao.n, inicio, cartaoId: cc ? cc.id : undefined, origem, upd: now };
+        const item = { id: uid(), desc: acao.desc, cat: acao.cat, valor: acao.valorParcela, n: acao.n, inicio, origem, upd: now };
+        if (cc) ligarCartaoParcelado(estado, item, cc.id, hoje);
         estado.parcelados.push(item);
         return { ok: true, item, colecao: 'parcelados', msg: `🛍️ Compra parcelada anotada: ${acao.desc} — ${acao.n}x de ${brl(acao.valorParcela)} a partir de ${mesCurto(inicio)}${cc ? ` no cartão *${cc.nome}*` : ''}. As parcelas entram sozinhas nos meses certos.${cc ? '' : '\n💳 Dica: diga o cartão ("em 10x no cartão Nubank") que eu separo por cartão.'}` };
       }
@@ -1434,7 +1465,7 @@
 
   return {
     CATEGORIAS, TIPOS_ENTRADA, INCENTIVOS, MESES, sem, uid, iso, pad, brl, dataBR, mesDe, nomeMes, mesCurto, somaMes, difMeses, diasNoMes, agora,
-    VERSICULOS, versiculoDoDia, LIMITE_VALOR, LIMITE_TEXTO, sanearEstado, BANCOS, detectarCartao, garantirCartao, mesFatura, diaFechamento, vencFatura, fatura, pagarFatura, faturasAVencer, faturaDaVez, rotuloFatura,
+    VERSICULOS, versiculoDoDia, LIMITE_VALOR, LIMITE_TEXTO, sanearEstado, BANCOS, detectarCartao, garantirCartao, mesFatura, diaFechamento, vencFatura, primeiraFaturaAberta, parcelaDesde, ligarCartaoParcelado, fatura, pagarFatura, faturasAVencer, faturaDaVez, rotuloFatura,
     NOME_TICKET, COR_TICKET, detectarTicket, garantirTicket, saldoTicket, gastoTicketMes, extratoTicket, excluirTicket,
     conversar, interpretar, separarLancamentos, lancarVarios, aplicar, remover, marcarExcluido, acharExclusao, descreverAlvo, valorConta, definirValorConta, encerrarConta, garantirRendas, acharSonho, retirarDoSonho, estadoVazio, marcarPrimeiroAcesso, resumoMes, mesesComDados, parcelaNoMes, contaNoMes, contasAVencer, contasAtrasadas, totalSonho,
     textoResumo, textoContas, textoAgenda, textoAjuda, mensagemHumor, barra, mesclar, adivinharCategoria, extrairValor, extrairData, extrairHora

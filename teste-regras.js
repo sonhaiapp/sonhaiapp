@@ -205,5 +205,33 @@ confere('coloquei gasolina segue gasto', le('coloquei 100 de gasolina').tipo, 'g
 // ---------------------------------------------------------------- frases do guia continuam funcionando
 { const e = novo(); for (const f of ['gastei 45,90 no mercado', 'gastei 10 na lanchonete no cartão de crédito Itaú', 'comprei uma TV de 2000 em 10x no cartão Nubank', 'a fatura do Itaú vence dia 10 e fecha dia 3', 'quanto está a fatura do Itaú', 'paguei a fatura do Itaú', 'paguei 130 de luz', 'recebi 5000 de salário', 'conta de água vence dia 17, 90 reais', 'dentista quinta às 14h', 'guardei 200 para a viagem', 'transfere 100 da viagem para a reserva', 'exclui o gasto de 45,90', 'sim', 'desfazer', 'resumo', 'contas a pagar', 'agenda']) { const r = fala(e, f); if (!r.ok && !r.pergunta) { falhas++; console.log('❌ guia: ' + f + ' → ' + r.msg); } else ok++; } }
 
+// ---------------------------------------------------------------- 1.12: parcelada ligada ao cartão depois
+{ const hoje5 = new Date(2026, 10, 5, 22, 0);
+  const montar = () => { const e = novo(); e.cartoes.push({ id: 'i', nome: 'Itaú', cor: '#EC7000', diaVenc: 10, fechamento: 3, limite: 0, faturas: {} });
+    e.lancamentos.push({ id: 'g1', tipo: 'gasto', valor: 120, data: '2026-11-02', cat: 'Mercado', desc: 'Mercado', cartaoId: 'i', pagamento: 'Cartão' });
+    e.parcelados.push({ id: 'p1', desc: 'TV', cat: 'Casa', valor: 200, n: 10, inicio: '2026-07', upd: new Date(2026, 6, 10).getTime() }); return e; };
+  const sit = (e) => ['2026-07', '2026-08', '2026-09', '2026-10', '2026-11', '2026-12'].map((ym) => { const f = CC.fatura(e, 'i', ym, hoje5); return f.situacao + ':' + f.total; });
+  { const e = montar(); CC.ligarCartaoParcelado(e, e.parcelados[0], 'i', hoje5);
+    confere('ligar parcelada antiga não cria fatura vencida', sit(e), ['vazia:0', 'vazia:0', 'vazia:0', 'vazia:0', 'aberta:320', 'aberta:200']);
+    confere('cartão mostra a fatura de novembro', CC.faturaDaVez(e, e.cartoes[0], hoje5), '2026-11');
+    confere('parcela de novembro é a 5ª', CC.fatura(e, 'i', '2026-11', hoje5).parcelas.map((x) => x.k), [5]);
+    confere('resumo do mês continua contando a parcela', CC.resumoMes(e, '2026-09').parcelas, 200); }
+  { const e = montar(); e.parcelados[0].cartaoId = 'i'; e.parcelados[0].upd = hoje5.getTime();
+    confere('dados já salvos (ligados hoje, sem registro) se corrigem sozinhos', sit(e).slice(2, 5), ['vazia:0', 'vazia:0', 'aberta:320']);
+    CC.sanearEstado(e); confere('servidor grava a partir de qual fatura', e.parcelados[0].cartaoDesde, '2026-11'); }
+  { const e = montar(); e.parcelados[0].cartaoId = 'i'; e.parcelados[0].upd = new Date(2026, 6, 1).getTime();
+    confere('parcelada ligada desde a compra continua igual', sit(e).slice(0, 2), ['vencida:200', 'vencida:200']); }
+  { const e = montar(); const p = e.parcelados[0]; CC.ligarCartaoParcelado(e, p, 'i', hoje5); CC.ligarCartaoParcelado(e, p, 'i', new Date(2026, 11, 20));
+    confere('editar sem trocar o cartão não muda nada', p.cartaoDesde, '2026-11');
+    CC.ligarCartaoParcelado(e, p, '', hoje5); confere('tirar o cartão limpa o registro', [p.cartaoId, p.cartaoDesde], [undefined, undefined]); }
+  { const e = montar(); e.cartoes.push({ id: 'n', nome: 'Nubank', cor: '#820AD1', diaVenc: 15, fechamento: 8, limite: 0, faturas: {} });
+    const p = e.parcelados[0]; CC.ligarCartaoParcelado(e, p, 'i', hoje5); CC.ligarCartaoParcelado(e, p, 'n', new Date(2026, 10, 20));
+    confere('trocar de cartão passa a valer da próxima fatura em aberto', [p.cartaoId, p.cartaoDesde], ['n', '2026-12']); }
+  { const e = novo(); fala(e, 'comprei uma TV de 2000 em 10x no cartão Nubank', hoje5); const p = e.parcelados[0], c = e.cartoes[0];
+    confere('compra nova por voz entra na fatura certa', [!!p.cartaoDesde, CC.fatura(e, c.id, p.inicio, hoje5).parcelas.length], [true, 1]); }
+  { const e = montar(); const p = e.parcelados[0]; p.cartaoId = 'i'; p.cartaoDesde = '<script>'; CC.sanearEstado(e);
+    confere('registro inválido é refeito', /^\d{4}-\d{2}$/.test(p.cartaoDesde), true); }
+}
+
 console.log(`\n${falhas ? '⚠️' : '✅'} ${ok} testes passaram, ${falhas} falharam.`);
 process.exit(falhas ? 1 : 0);

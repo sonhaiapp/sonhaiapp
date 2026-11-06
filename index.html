@@ -708,13 +708,38 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
     const m = v > diaFechamento(cartao) ? ym : somaMes(ym, 1);
     return m + '-' + pad(Math.min(v, diasNoMes(m)));
   }
+  /** Primeira fatura do cartão que ainda não tinha vencido na data informada. */
+  function primeiraFaturaAberta(cartao, quando) {
+    const d = iso(quando instanceof Date ? quando : new Date(quando));
+    const ym0 = mesDe(d);
+    for (const k of [-1, 0, 1, 2]) { const ym = somaMes(ym0, k); if (vencFatura(cartao, ym) >= d) return ym; }
+    return ym0;
+  }
+  /**
+   * A partir de qual fatura a parcelada é cobrada no cartão.
+   * Parcelas de faturas que já tinham vencido quando a compra foi ligada ao cartão ficam fora:
+   * a pessoa já pagou essas faturas fora do app. Sem o registro (dados antigos), usa a data da última alteração.
+   */
+  function parcelaDesde(p, cartao) {
+    if (/^\d{4}-\d{2}$/.test(p.cartaoDesde || '')) return p.cartaoDesde;
+    return cartao && +p.upd ? primeiraFaturaAberta(cartao, new Date(+p.upd)) : p.inicio;
+  }
+  /** Liga (ou desliga) a parcelada a um cartão, guardando a partir de qual fatura ela entra. */
+  function ligarCartaoParcelado(estado, p, cartaoId, hoje) {
+    cartaoId = cartaoId || undefined;
+    const c = cartaoId ? (estado.cartoes || []).find((x) => x.id === cartaoId) : null;
+    if (!c) { p.cartaoId = undefined; delete p.cartaoDesde; return; }
+    if (p.cartaoId === cartaoId) { if (!p.cartaoDesde) p.cartaoDesde = parcelaDesde(p, c); return; }
+    p.cartaoId = cartaoId;
+    p.cartaoDesde = primeiraFaturaAberta(c, hoje || new Date());
+  }
   /** Fatura de um cartão num mês: compras, parcelas, restante anterior, total, pago, situação. */
   function fatura(estado, cartaoId, ym, hoje, prof) {
     prof = prof || 0;
     const c = (estado.cartoes || []).find((x) => x.id === cartaoId);
     if (!c) return null;
     const compras = (estado.lancamentos || []).filter((l) => l.tipo === 'gasto' && l.cartaoId === cartaoId && mesFatura(c, l.data) === ym);
-    const parcelas = (estado.parcelados || []).filter((p) => p.cartaoId === cartaoId).map((p) => ({ p, k: parcelaNoMes(p, ym) })).filter((x) => x.k);
+    const parcelas = (estado.parcelados || []).filter((p) => p.cartaoId === cartaoId && ym >= parcelaDesde(p, c)).map((p) => ({ p, k: parcelaNoMes(p, ym) })).filter((x) => x.k);
     let anterior = 0;
     if (prof < 12) { const fa = fatura(estado, cartaoId, somaMes(ym, -1), hoje, prof + 1); if (fa && fa.situacao === 'parcial') anterior = fa.falta; }
     const total = Math.round((compras.reduce((a, b) => a + b.valor, 0) + parcelas.reduce((a, b) => a + b.p.valor, 0) + anterior) * 100) / 100;
@@ -1071,6 +1096,11 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
     for (const a of estado.agenda) if (a.hora && !/^\d{2}:\d{2}$/.test(a.hora)) a.hora = '';
     for (const x of estado.sonhos) { x.emoji = limpaEmoji(x.emoji); if (!Array.isArray(x.aportes)) x.aportes = []; }
     for (const x of estado.cartoes) x.cor = corValida(x.cor, '#1B3A6B');
+    for (const x of estado.parcelados) {
+      const c = x.cartaoId && estado.cartoes.find((k) => k.id === x.cartaoId);
+      if (!c) delete x.cartaoDesde;
+      else if (!/^\d{4}-\d{2}$/.test(x.cartaoDesde || '')) x.cartaoDesde = parcelaDesde(Object.assign({}, x, { cartaoDesde: '' }), c);
+    }
     for (const x of estado.tickets) x.cor = corValida(x.cor, COR_TICKET);
     sanearItem(pf);
     if (Array.isArray(estado.chat)) estado.chat = estado.chat.slice(-200).map((m) => ({ de: m.de === 'me' ? 'me' : 'bot', txt: String(m.txt || '').slice(0, 4000), em: +m.em || 0 }));
@@ -1227,7 +1257,8 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
       case 'parcelado': {
         const cc = garantirCartao(estado, acao.cartao);
         const inicio = cc && acao.data ? mesFatura(cc, acao.data) : acao.inicio;
-        const item = { id: uid(), desc: acao.desc, cat: acao.cat, valor: acao.valorParcela, n: acao.n, inicio, cartaoId: cc ? cc.id : undefined, origem, upd: now };
+        const item = { id: uid(), desc: acao.desc, cat: acao.cat, valor: acao.valorParcela, n: acao.n, inicio, origem, upd: now };
+        if (cc) ligarCartaoParcelado(estado, item, cc.id, hoje);
         estado.parcelados.push(item);
         return { ok: true, item, colecao: 'parcelados', msg: `🛍️ Compra parcelada anotada: ${acao.desc} — ${acao.n}x de ${brl(acao.valorParcela)} a partir de ${mesCurto(inicio)}${cc ? ` no cartão *${cc.nome}*` : ''}. As parcelas entram sozinhas nos meses certos.${cc ? '' : '\n💳 Dica: diga o cartão ("em 10x no cartão Nubank") que eu separo por cartão.'}` };
       }
@@ -1725,7 +1756,7 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
 
   return {
     CATEGORIAS, TIPOS_ENTRADA, INCENTIVOS, MESES, sem, uid, iso, pad, brl, dataBR, mesDe, nomeMes, mesCurto, somaMes, difMeses, diasNoMes, agora,
-    VERSICULOS, versiculoDoDia, LIMITE_VALOR, LIMITE_TEXTO, sanearEstado, BANCOS, detectarCartao, garantirCartao, mesFatura, diaFechamento, vencFatura, fatura, pagarFatura, faturasAVencer, faturaDaVez, rotuloFatura,
+    VERSICULOS, versiculoDoDia, LIMITE_VALOR, LIMITE_TEXTO, sanearEstado, BANCOS, detectarCartao, garantirCartao, mesFatura, diaFechamento, vencFatura, primeiraFaturaAberta, parcelaDesde, ligarCartaoParcelado, fatura, pagarFatura, faturasAVencer, faturaDaVez, rotuloFatura,
     NOME_TICKET, COR_TICKET, detectarTicket, garantirTicket, saldoTicket, gastoTicketMes, extratoTicket, excluirTicket,
     conversar, interpretar, separarLancamentos, lancarVarios, aplicar, remover, marcarExcluido, acharExclusao, descreverAlvo, valorConta, definirValorConta, encerrarConta, garantirRendas, acharSonho, retirarDoSonho, estadoVazio, marcarPrimeiroAcesso, resumoMes, mesesComDados, parcelaNoMes, contaNoMes, contasAVencer, contasAtrasadas, totalSonho,
     textoResumo, textoContas, textoAgenda, textoAjuda, mensagemHumor, barra, mesclar, adivinharCategoria, extrairValor, extrairData, extrairHora
@@ -2233,7 +2264,7 @@ TELAS.ajustes = function(){
   h += '<section class="card"><h2 style="margin-bottom:10px">🏷️ Categorias e limites</h2><div class="sub" style="margin-bottom:8px">Toque para mudar o emoji, o nome ou colocar um limite mensal. Eu aviso quando passar.</div><div class="list">' + S.categorias.map((c, i) => '<button class="item" data-edit-cat="' + i + '"><span class="ico" style="background:' + soft(c.cor) + '">' + c.emoji + '</span><span class="mid"><span class="ttl">' + esc(c.nome) + '</span><span class="meta">' + (c.limite ? 'Limite ' + brl(c.limite) : 'Sem limite') + '</span></span></button>').join('') + '</div><button class="btn ghost block" style="margin-top:8px" data-novo="categoria">+ Nova categoria</button></section>';
   h += '<section class="card"><h2 style="margin-bottom:10px">💾 Meus dados no aparelho</h2><div class="btnrow"><button class="btn ghost" id="bk-exp">⬇️ Copiar backup</button><label class="btn ghost" for="bk-imp">⬆️ Importar backup</label><input id="bk-imp" type="file" accept=".json,application/json" hidden></div>' + (SERVER ? '' : '<div class="btnrow" style="margin-top:8px"><button class="btn ghost" id="bk-demo">🧪 Ver exemplo</button><button class="btn danger" id="bk-zero">🧹 Começar do zero</button></div>') + '<div id="bk-out"></div></section>';
   h += blocoConta();
-  h += '<p class="sub" style="text-align:center">Sonhaí · versão 1.11 (05/11) · feito com 💙 para ajudar famílias</p>';
+  h += '<p class="sub" style="text-align:center">Sonhaí · versão 1.12 (05/11) · feito com 💙 para ajudar famílias</p>';
   return h;
 };
 
@@ -2497,7 +2528,7 @@ function formParc(p){
   const novo = !p; let cat = p ? p.cat : 'Compras Online';
   sheet('<h3>' + (novo ? '🛍️ Compra parcelada' : '✎ Editar parcelada') + '</h3><form id="fp"><div class="field"><label for="fp-d">O que comprou</label><input id="fp-d" value="' + esc(p ? p.desc : '') + '" required></div><div class="grid2"><div class="field"><label for="fp-v">Valor da parcela</label><input id="fp-v" class="money" inputmode="decimal" value="' + (p ? String(p.valor).replace('.', ',') : '') + '"></div><div class="field"><label for="fp-n">Nº de parcelas</label><input id="fp-n" type="number" min="1" max="72" value="' + (p ? p.n : '') + '"></div></div><div class="grid2"><div class="field"><label for="fp-i">1ª parcela em</label><input id="fp-i" type="month" value="' + (p ? p.inicio : C.mesDe(hojeISO())) + '"></div><div class="field"><label for="fp-c">Cartão</label><select id="fp-c"><option value="">—</option>' + S.cartoes.map((c) => '<option value="' + c.id + '"' + (p && p.cartaoId === c.id ? ' selected' : '') + '>💳 ' + esc(c.nome) + '</option>').join('') + '</select></div></div><div class="field"><label>Categoria</label>' + catPicker(cat) + '</div><div class="btnrow">' + (novo ? '' : '<button type="button" class="btn danger" id="fp-x">🗑️ Excluir</button>') + '<button class="btn pri" type="submit">Salvar</button></div></form>', (root) => {
     bindCat(root, (x) => cat = x);
-    $('#fp').onsubmit = (e) => { e.preventDefault(); const o = p || { id: C.uid(), origem: 'manual' }; Object.assign(o, { desc: $('#fp-d').value.trim(), valor: num($('#fp-v').value), n: Math.max(1, +$('#fp-n').value || 1), inicio: $('#fp-i').value || C.mesDe(hojeISO()), cartaoId: $('#fp-c').value || undefined, cat, upd: Date.now() }); if (novo) S.parcelados.push(o); fechar(); save(); toast('🛍️ Parcelas organizadas!'); };
+    $('#fp').onsubmit = (e) => { e.preventDefault(); const o = p || { id: C.uid(), origem: 'manual' }; C.ligarCartaoParcelado(S, o, $('#fp-c').value, hoje()); Object.assign(o, { desc: $('#fp-d').value.trim(), valor: num($('#fp-v').value), n: Math.max(1, +$('#fp-n').value || 1), inicio: $('#fp-i').value || C.mesDe(hojeISO()), cat, upd: Date.now() }); if (novo) S.parcelados.push(o); fechar(); save(); toast('🛍️ Parcelas organizadas!'); };
     if (!novo) $('#fp-x').onclick = () => { C.remover(S, 'parcelados', p.id); fechar(); save(); toast('🗑️ Removida'); };
   });
 }
@@ -2507,7 +2538,7 @@ function formCartao(c){
   sheet('<h3>' + (novo ? '💳 Novo cartão' : '✎ ' + esc(c.nome)) + '</h3><form id="fk2"><div class="field"><label for="ck-n">Banco / nome do cartão</label><input id="ck-n" value="' + esc(c ? c.nome : '') + '" placeholder="Itaú, Bradesco, Nubank…" required></div><div class="field"><label>Cor</label><div class="chips" id="ck-cor">' + CORES_CARTAO.map((x) => '<button type="button" data-cor="' + x + '" class="' + (x === cor ? 'on' : '') + '" style="width:36px;height:36px;padding:0;background:' + x + ';border:3px solid ' + (x === cor ? 'var(--ink)' : 'transparent') + '" aria-label="Cor"></button>').join('') + '</div></div><div class="grid2"><div class="field"><label for="ck-v">Dia do vencimento</label><input id="ck-v" type="number" min="1" max="31" value="' + (c ? c.diaVenc : 10) + '"></div><div class="field"><label for="ck-f">Dia do fechamento</label><input id="ck-f" type="number" min="0" max="31" value="' + (c && c.fechamento ? c.fechamento : '') + '" placeholder="opcional"></div></div><div class="note" style="margin-bottom:12px">💡 Sem o fechamento, considero 7 dias antes do vencimento.</div><div class="field"><label for="ck-l">Limite (opcional)</label><input id="ck-l" inputmode="decimal" value="' + (c && c.limite ? String(c.limite).replace('.', ',') : '') + '"></div><div class="note" style="margin-bottom:12px">🔔 Eu te lembro da fatura 1 dia antes e no dia do vencimento.</div><div class="btnrow">' + (novo ? '' : '<button type="button" class="btn danger" id="ck-x">🗑️ Excluir</button>') + '<button class="btn pri" type="submit">Salvar</button></div></form>', (root) => {
     root.querySelectorAll('[data-cor]').forEach((b) => b.onclick = () => { cor = b.dataset.cor; root.querySelectorAll('[data-cor]').forEach((x) => x.style.borderColor = x === b ? 'var(--ink)' : 'transparent'); });
     $('#fk2').onsubmit = (e) => { e.preventDefault(); const o = c || { id: C.uid(), faturas: {} }; Object.assign(o, { nome: $('#ck-n').value.trim(), cor, diaVenc: Math.max(1, Math.min(31, +$('#ck-v').value || 10)), fechamento: Math.max(0, Math.min(31, +$('#ck-f').value || 0)), limite: num($('#ck-l').value), upd: Date.now() }); if (novo) S.cartoes.push(o); fechar(); save(); toast('💳 Cartão salvo!'); };
-    if (!novo) $('#ck-x').onclick = () => confirmar('Excluir o cartão ' + c.nome + '? As compras continuam, só ficam sem cartão.', () => { [...S.lancamentos, ...S.parcelados].forEach((x) => { if (x.cartaoId === c.id) { x.cartaoId = undefined; x.upd = Date.now(); } }); C.remover(S, 'cartoes', c.id); save(); toast('🗑️ Cartão removido'); });
+    if (!novo) $('#ck-x').onclick = () => confirmar('Excluir o cartão ' + c.nome + '? As compras continuam, só ficam sem cartão.', () => { [...S.lancamentos, ...S.parcelados].forEach((x) => { if (x.cartaoId === c.id) { x.cartaoId = undefined; delete x.cartaoDesde; x.upd = Date.now(); } }); C.remover(S, 'cartoes', c.id); save(); toast('🗑️ Cartão removido'); });
   });
 }
 function formCredito(t, r){
