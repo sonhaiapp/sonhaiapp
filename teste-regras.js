@@ -233,5 +233,25 @@ confere('coloquei gasolina segue gasto', le('coloquei 100 de gasolina').tipo, 'g
     confere('registro inválido é refeito', /^\d{4}-\d{2}$/.test(p.cartaoDesde), true); }
 }
 
+// ---------------------------------------------------------------- áudio
+for (const [f, esperado] of [
+  ['Gastei 50 reais no mercado. Legendas pela comunidade Amara.org', 'Gastei 50 reais no mercado'],
+  ['gastei 45,90 na padaria. Obrigado.', 'gastei 45,90 na padaria'],
+  ['Obrigado por assistir!', ''], ['...', ''], ['Tchau, tchau.', ''], ['Inscreva-se no canal e ative o sininho!', ''],
+  ['i food 32', 'iFood 32'], ['paguei 200 no nu bank', 'paguei 200 no Nubank'], ['gastei r$45 ,90 no mercado', 'gastei R$ 45,90 no mercado'],
+  ['obrigado', 'obrigado'], ['almoço 40, 12 de café', 'almoço 40, 12 de café']
+]) confere('limpa o áudio: ' + f, CC.limparFala(f), esperado);
+confere('áudio limpo vira o gasto certo', (() => { const a = le(CC.limparFala('Gastei R$ 2.000 no conserto do carro. Obrigado.')); return [a.tipo, a.valor]; })(), ['gasto', 2000]);
+confere('entre versões, fica com a que tem valor', CC.melhorFrase(['gastei no mercado', 'gastei 50 no mercado'], { hoje: quarta }), 'gastei 50 no mercado');
+confere('empate fica com a primeira', CC.melhorFrase(['gastei 50 no mercado', 'gastei 50 no mercadinho'], { hoje: quarta }), 'gastei 50 no mercado');
+confere('frase com dois gastos vale mais', CC.melhorFrase(['gastei 50 no mercado e na padaria', 'gastei 50 no mercado e 30 na padaria'], { hoje: quarta }), 'gastei 50 no mercado e 30 na padaria');
+confere('versões vazias', CC.melhorFrase(['', 'Obrigado por assistir'], { hoje: quarta }), '');
+
+// ---------------------------------------------------------------- atalhos da tela inicial
+{ const e = novo(); e.perfil.atalhos = ['contas', 'contas', '<img src=x>', 'sonhos', 'agenda', 'dividas', 7]; CC.sanearEstado(e); confere('atalhos: só 3, sem repetir e sem código', e.perfil.atalhos, ['contas', 'sonhos', 'agenda']); }
+{ const e = novo(); e.perfil.atalhos = 'contas'; CC.sanearEstado(e); confere('atalhos inválidos viram lista vazia', e.perfil.atalhos, []); }
+{ const e = novo(); CC.sanearEstado(e); confere('conta sem atalhos não ganha campo', 'atalhos' in e.perfil, false); }
+{ const a = novo(), b = novo(); b.perfil.atalhos = ['agenda', 'rendas', 'gastos']; b.perfilUpd = Date.now() + 1000; confere('atalhos passam de um aparelho para o outro', CC.mesclar(a, b).perfil.atalhos, ['agenda', 'rendas', 'gastos']); }
+
 console.log(`\n${falhas ? '⚠️' : '✅'} ${ok} testes passaram, ${falhas} falharam.`);
 process.exit(falhas ? 1 : 0);

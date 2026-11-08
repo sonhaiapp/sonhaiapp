@@ -223,6 +223,17 @@ h1,h2,h3{font-family:var(--f-display);line-height:1.1;margin:0;text-wrap:balance
 
 .toast{position:fixed;left:50%;bottom:calc(100px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:60;background:var(--ink);color:var(--bg);border-radius:16px;padding:12px 14px;font-weight:700;display:flex;gap:12px;align-items:center;justify-content:space-between;width:calc(100% - 32px);max-width:520px;box-shadow:var(--shadow);animation:up .25s ease}
 .toast button{border:0;background:var(--sun);color:var(--sun-ink);border-radius:10px;padding:6px 10px;font-weight:800}
+.atalhos{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.atalhos button{border:0;border-radius:18px;padding:14px 6px;display:grid;justify-items:center;gap:6px;font-weight:800;font-size:13.5px;background:var(--surface-2);color:var(--ink);min-width:0;min-height:88px;align-content:center}
+.atalhos button span:first-child{font-size:30px;line-height:1}
+.atalhos button span:last-child{max-width:100%;text-align:center;line-height:1.15;overflow-wrap:break-word}
+@media (max-width:360px){.atalhos{gap:8px}.atalhos button{padding:12px 2px;font-size:12px}}
+.atpick{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.atpick button{position:relative;border:2px solid var(--line);background:var(--surface-2);border-radius:16px;padding:12px 4px;display:grid;justify-items:center;gap:4px;font-weight:800;font-size:12.5px;min-width:0;color:var(--ink)}
+.atpick button span:first-child{font-size:26px;line-height:1}
+.atpick button[aria-pressed="true"]{border-color:var(--navy);background:var(--tile-bal)}
+.atpick button[aria-pressed="true"]::after{content:attr(data-ordem);position:absolute;top:-8px;right:-6px;width:24px;height:24px;border-radius:50%;background:var(--navy);color:var(--bg);font-size:13px;display:grid;place-items:center}
+.atpick.cheio button[aria-pressed="false"]{opacity:.45}
 .morelist{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
 .morelist button{border:0;border-radius:18px;padding:16px 8px;display:grid;justify-items:center;gap:6px;font-weight:800;font-size:13.5px;background:var(--surface);box-shadow:var(--shadow);min-width:0}
 .morelist button span:first-child{font-size:28px}
@@ -1086,6 +1097,8 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
     if (typeof pf.whatsapp !== 'string') pf.whatsapp = String(pf.whatsapp == null ? '' : pf.whatsapp);
     if (!/^\d{2}:\d{2}$/.test(pf.lembreteHora || '')) pf.lembreteHora = '08:00';
     pf.orcamento = Number(pf.orcamento) || 0; pf.saldoInicial = Number(pf.saldoInicial) || 0;
+    // atalhos da tela inicial: até 3 nomes de tela, sem repetir
+    if ('atalhos' in pf) pf.atalhos = Array.isArray(pf.atalhos) ? [...new Set(pf.atalhos.filter((x) => typeof x === 'string' && /^[a-z]{2,20}$/.test(x)))].slice(0, 3) : [];
     if (Number(estado.perfilUpd) > Date.now() + 864e5) estado.perfilUpd = Date.now();
     for (const col of COLS_ITENS) estado[col] = Array.isArray(estado[col]) ? estado[col].filter((x) => x && typeof x === 'object' && !Array.isArray(x) && x.id) : [];
     if (!Array.isArray(estado.categorias) || !estado.categorias.length) estado.categorias = CATEGORIAS.map((c) => ({ nome: c.nome, emoji: c.emoji, cor: c.cor, limite: 0 }));
@@ -1726,6 +1739,55 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
     return { texto: v[0], ref: v[1] };
   }
 
+  // ---------------------------------------------------------------- fala
+  // Frases que o Whisper inventa quando o áudio tem silêncio ou ruído (vêm de legendas de vídeos)
+  const ALUCINACOES = [
+    /legendas?\s+(?:pela|por|feitas? pela)\s+comunidade\s+amara\.?\s*org/gi, /amara\.org/gi,
+    /(?:obrigad[oa]|valeu)\s+por\s+(?:assistir|ver|ouvir)[^.!?]*[.!?]?/gi,
+    /inscreva-se\s+(?:no|em nosso|no nosso)\s+canal[^.!?]*[.!?]?/gi, /ative\s+o\s+sininho[^.!?]*[.!?]?/gi,
+    /deixe\s+(?:seu|o seu)\s+like[^.!?]*[.!?]?/gi, /at[eé]\s+o\s+pr[oó]ximo\s+v[ií]deo[^.!?]*[.!?]?/gi,
+    /\b(?:sous-titrage|subtitles by)[^.!?]*[.!?]?/gi, /^\s*(?:tchau[\s,!.]*)+$/i
+  ];
+  // Grafias que o reconhecimento de voz costuma errar
+  const TROCAS_FALA = [
+    [/\b(?:i|ai|ay)\s*-?\s*food\b/gi, 'iFood'], [/\bnu\s+bank\b/gi, 'Nubank'], [/\bpic\s*pay\b/gi, 'PicPay'],
+    [/\bmercado\s+pago\b/gi, 'Mercado Pago'], [/\buber\s+eats\b/gi, 'Uber Eats'],
+    [/\br\s*\$\s*/gi, 'R$ '], [/(\d)\s*reais\b/gi, '$1 reais'], [/(\d)\s+,(\d{2})\b/g, '$1,$2']
+  ];
+  /** Limpa o texto vindo de um áudio: tira frases inventadas e acerta grafias comuns. */
+  function limparFala(txt) {
+    let t = String(txt || '').replace(/\s+/g, ' ').trim();
+    for (const re of ALUCINACOES) t = t.replace(re, ' ');
+    for (const [re, por] of TROCAS_FALA) t = t.replace(re, por);
+    t = t.replace(/\s+/g, ' ').replace(/^[\s.,;!?…-]+/, '').trim();
+    // um "Obrigado." solto no fim, depois de um pedido, costuma ser inventado
+    t = t.replace(/^(.{6,}?)[.!,]?\s+(?:obrigad[oa]|tchau)[.!]*$/i, '$1');
+    t = t.replace(/[.!…]+$/, '').trim();
+    if (!/[a-z0-9à-ú]/i.test(t)) return '';
+    return t;
+  }
+  /** Entre várias versões do que a pessoa disse, fica com a que o Sonhaí entende melhor. */
+  function notaFrase(f, opts) {
+    const a = interpretar(f, opts || {});
+    let n = 0;
+    const varios = typeof separarLancamentos === 'function' ? separarLancamentos(f, opts || {}) : null;
+    if (Array.isArray(varios) && varios.length > 1) n += 6;
+    if (a.tipo && a.tipo !== 'desconhecido') n += 4;
+    if (a.valor > 0 || a.valorParcela > 0 || (Array.isArray(a.itens) && a.itens.length)) n += 2;
+    if (a.cat && a.cat !== 'Outros') n += 1;
+    if ((a.cartao && a.cartao.id) || a.sonhoId) n += 1;
+    return n;
+  }
+  function melhorFrase(frases, opts) {
+    let melhor = '', nota = -1;
+    for (const f of frases || []) {
+      const t = limparFala(f); if (!t) continue;
+      const n = notaFrase(t, opts);
+      if (n > nota) { nota = n; melhor = t; }
+    }
+    return melhor;
+  }
+
   // ---------------------------------------------------------------- mesclagem
   const COLECOES = ['lancamentos', 'contas', 'rendas', 'parcelados', 'cartoes', 'tickets', 'recargas', 'anuais', 'sonhos', 'dividas', 'agenda', 'categorias'];
   /** Junta dois estados (celular e servidor) sem perder o que veio do WhatsApp. */
@@ -1756,7 +1818,7 @@ canvas.confetti{position:fixed;inset:0;pointer-events:none;z-index:70}
 
   return {
     CATEGORIAS, TIPOS_ENTRADA, INCENTIVOS, MESES, sem, uid, iso, pad, brl, dataBR, mesDe, nomeMes, mesCurto, somaMes, difMeses, diasNoMes, agora,
-    VERSICULOS, versiculoDoDia, LIMITE_VALOR, LIMITE_TEXTO, sanearEstado, BANCOS, detectarCartao, garantirCartao, mesFatura, diaFechamento, vencFatura, primeiraFaturaAberta, parcelaDesde, ligarCartaoParcelado, fatura, pagarFatura, faturasAVencer, faturaDaVez, rotuloFatura,
+    limparFala, melhorFrase, VERSICULOS, versiculoDoDia, LIMITE_VALOR, LIMITE_TEXTO, sanearEstado, BANCOS, detectarCartao, garantirCartao, mesFatura, diaFechamento, vencFatura, primeiraFaturaAberta, parcelaDesde, ligarCartaoParcelado, fatura, pagarFatura, faturasAVencer, faturaDaVez, rotuloFatura,
     NOME_TICKET, COR_TICKET, detectarTicket, garantirTicket, saldoTicket, gastoTicketMes, extratoTicket, excluirTicket,
     conversar, interpretar, separarLancamentos, lancarVarios, aplicar, remover, marcarExcluido, acharExclusao, descreverAlvo, valorConta, definirValorConta, encerrarConta, garantirRendas, acharSonho, retirarDoSonho, estadoVazio, marcarPrimeiroAcesso, resumoMes, mesesComDados, parcelaNoMes, contaNoMes, contasAVencer, contasAtrasadas, totalSonho,
     textoResumo, textoContas, textoAgenda, textoAjuda, mensagemHumor, barra, mesclar, adivinharCategoria, extrairValor, extrairData, extrairHora
@@ -2014,6 +2076,7 @@ TELAS.inicio = function(){
   h += '<section class="card hero" aria-label="Resumo do mês"><div class="cardhead" style="margin:0"><div class="lbl">' + (semRenda ? 'Previsto para sair' : r.previsto ? 'Deve sobrar no mês' : 'Sobrou no mês') + '</div><button class="olho" id="olho" aria-label="' + (oculto ? 'Mostrar valores' : 'Esconder valores') + '" aria-pressed="' + oculto + '">' + (oculto ? OLHO_FECHADO : OLHO) + '</button></div><div class="big num ' + (semRenda ? '' : r.sobra < 0 ? 'neg' : 'pos') + '">' + M(semRenda ? r.gastoTotal : r.sobra) + '</div><div class="sub">Entrou ' + M(r.entradasReais) + (r.previsto ? ' · vai cair ' + M(r.previsto) : '') + ' · saiu ' + M(r.gastoTotal) + ' · guardou ' + M(r.guardado) + '</div><div class="disp">💵 Disponível agora: <b class="num ' + (disp < 0 ? 'neg' : '') + '">' + M(disp) + '</b> <span class="sub">(já descontado o que foi pago)</span></div>';
   if (r.orcamento > 0) h += '<div class="meter"><div class="bar" role="progressbar" aria-valuenow="' + Math.round(pct * 100) + '" aria-valuemin="0" aria-valuemax="100"><div class="fill" style="width:' + Math.min(100, pct * 100) + '%;background:' + cor + '"></div></div><div class="legend"><span><b>' + Math.round(pct * 100) + '%</b> do orçamento usado</span><span>' + (r.orcamento - r.gastoTotal >= 0 ? 'Restam <b>' + M(r.orcamento - r.gastoTotal) + '</b>' : 'Passou <b>' + M(r.gastoTotal - r.orcamento) + '</b>') + '</span></div></div>';
   h += mood(r) + '</section>';
+  h += blocoAtalhos();
   if (ehHoje && !(S.rendas || []).length && !S.demo && !S.perfil.guiaPassos) h += '<section class="card" style="background:var(--tile-in)"><div class="cardhead" style="margin:0"><div><h2 style="font-size:18px">💰 Sua renda entra sozinha</h2><div class="sub">Cadastre salário ou aposentadoria uma vez só.</div></div><button class="addbtn" data-novo="renda">Cadastrar</button></div></section>';
   h += '<section class="tiles" aria-label="Números do mês">' +
     '<button class="tile t-in" data-go="rendas"><span class="t">💰 Entrou</span><span class="v num">' + M(r.entradasReais) + '</span><span class="s">' + (r.previsto ? 'Vai cair ' + M(r.previsto).replace(',00', '') : r.lancamentos.filter((l) => l.tipo === 'entrada').length + ' rendas') + '</span></button>' +
@@ -2264,9 +2327,42 @@ TELAS.ajustes = function(){
   h += '<section class="card"><h2 style="margin-bottom:10px">🏷️ Categorias e limites</h2><div class="sub" style="margin-bottom:8px">Toque para mudar o emoji, o nome ou colocar um limite mensal. Eu aviso quando passar.</div><div class="list">' + S.categorias.map((c, i) => '<button class="item" data-edit-cat="' + i + '"><span class="ico" style="background:' + soft(c.cor) + '">' + c.emoji + '</span><span class="mid"><span class="ttl">' + esc(c.nome) + '</span><span class="meta">' + (c.limite ? 'Limite ' + brl(c.limite) : 'Sem limite') + '</span></span></button>').join('') + '</div><button class="btn ghost block" style="margin-top:8px" data-novo="categoria">+ Nova categoria</button></section>';
   h += '<section class="card"><h2 style="margin-bottom:10px">💾 Meus dados no aparelho</h2><div class="btnrow"><button class="btn ghost" id="bk-exp">⬇️ Copiar backup</button><label class="btn ghost" for="bk-imp">⬆️ Importar backup</label><input id="bk-imp" type="file" accept=".json,application/json" hidden></div>' + (SERVER ? '' : '<div class="btnrow" style="margin-top:8px"><button class="btn ghost" id="bk-demo">🧪 Ver exemplo</button><button class="btn danger" id="bk-zero">🧹 Começar do zero</button></div>') + '<div id="bk-out"></div></section>';
   h += blocoConta();
-  h += '<p class="sub" style="text-align:center">Sonhaí · versão 1.12 (05/11) · feito com 💙 para ajudar famílias</p>';
+  h += '<p class="sub" style="text-align:center">Sonhaí · versão 1.13 (08/11) · feito com 💙 para ajudar famílias</p>';
   return h;
 };
+
+// ------------------------------------------------------------ atalhos da tela inicial (cada cliente escolhe 3)
+const ATALHOS = { contas: ['🧾', 'Contas'], cartoes: ['💳', 'Cartões'], sonhos: ['⭐', 'Sonhos'], gastos: ['🛒', 'Gastos'], rendas: ['💰', 'Rendas'], agenda: ['📌', 'Agenda'], relatorios: ['📈', 'Relatórios'], parcelados: ['🛍️', 'Parcelados'], dividas: ['📉', 'Dívidas'], anuais: ['📅', 'Gastos do ano'], whatsapp: ['💬', 'Mensagens'], ajustes: ['⚙️', 'Ajustes'] };
+const ATALHOS_PADRAO = ['contas', 'cartoes', 'sonhos'];
+function atalhosValidos(){ return Object.keys(ATALHOS).filter((k) => typeof TELAS[k] === 'function'); }
+function meusAtalhos(){
+  const ok = atalhosValidos();
+  const a = ((S.perfil && S.perfil.atalhos) || []).filter((k) => ok.includes(k));
+  return a.length === 3 ? a : ATALHOS_PADRAO.filter((k) => ok.includes(k));
+}
+function blocoAtalhos(){
+  return '<section class="card" aria-label="Meus atalhos"><div class="cardhead" style="margin-bottom:10px"><h2 style="font-size:18px">⚡ Meus atalhos</h2><button class="link" id="at-trocar">Trocar ›</button></div><div class="atalhos">' + meusAtalhos().map((k) => '<button data-go="' + k + '"><span aria-hidden="true">' + ATALHOS[k][0] + '</span><span>' + ATALHOS[k][1] + '</span></button>').join('') + '</div></section>';
+}
+function formAtalhos(){
+  let sel = meusAtalhos().slice();
+  const lista = () => atalhosValidos().map((k) => { const i = sel.indexOf(k); return '<button type="button" data-at="' + k + '" aria-pressed="' + (i >= 0) + '"' + (i >= 0 ? ' data-ordem="' + (i + 1) + '"' : '') + '><span aria-hidden="true">' + ATALHOS[k][0] + '</span><span>' + ATALHOS[k][1] + '</span></button>'; }).join('');
+  sheet('<h3>⚡ Meus atalhos</h3><p class="sub" style="margin:-4px 0 12px">Escolha 3 para a tela inicial. A ordem de escolha é a ordem na tela.</p><div class="atpick" id="at-lista"></div><div class="note" id="at-nota" style="margin:12px 0" aria-live="polite"></div><button class="btn pri block" id="at-ok">Salvar</button>', (root) => {
+    const desenha = () => {
+      const box = $('#at-lista'); box.innerHTML = lista(); box.classList.toggle('cheio', sel.length === 3);
+      $('#at-nota').textContent = sel.length === 3 ? '✅ Pronto! Toque em Salvar.' : 'Escolhidos: ' + sel.length + ' de 3.';
+      $('#at-ok').disabled = sel.length !== 3; $('#at-ok').style.opacity = sel.length === 3 ? '' : '.5';
+      box.querySelectorAll('[data-at]').forEach((b) => b.onclick = () => {
+        const k = b.dataset.at, i = sel.indexOf(k);
+        if (i >= 0) sel.splice(i, 1);
+        else if (sel.length < 3) sel.push(k);
+        else { $('#at-nota').textContent = 'Você já escolheu 3. Toque em um marcado para tirar.'; return; }
+        desenha();
+      });
+    };
+    desenha();
+    $('#at-ok').onclick = () => { if (sel.length !== 3) return; S.perfil.atalhos = sel.slice(); S.perfilUpd = Date.now(); fechar(); save(); toast('⚡ Atalhos salvos!'); };
+  });
+}
 
 TELAS.mais = function(){
   const it = [['💳', 'Cartões', 'cartoes'], ['🧾', 'Contas', 'contas'], ['⭐', 'Sonhos', 'sonhos'], ['📈', 'Relatórios', 'relatorios'], ['🛍️', 'Parcelados', 'parcelados'], ['💳', 'Dívidas', 'dividas'], ['📌', 'Gastos do ano', 'anuais'], ['💰', 'Rendas', 'rendas'], ['💬', 'Mensagens', 'whatsapp'], ['⚙️', 'Ajustes', 'ajustes']].concat(conta && conta.admin ? [['👑', 'Painel master', 'master']] : []).filter((x) => x[2] !== 'entradas');
@@ -2331,6 +2427,7 @@ function guiaPassos(){
   return [
     { t: 'Oi' + (nome ? ', ' + nome : '') + '! 👋', x: 'Vou te mostrar onde fica cada coisa. Leva 1 minutinho.', bt: 'Vamos lá' },
     { tela: 'inicio', alvo: '.hero', t: '📊 Seu resumo do mês', x: 'Aqui você vê quanto entrou, quanto saiu e quanto sobrou.' },
+    { tela: 'inicio', alvo: '#at-trocar', t: '⚡ Seus atalhos', x: 'Três atalhos para as telas que você mais usa. Toque em Trocar para escolher os seus.' },
     { tela: 'inicio', alvo: '#fab', onde: 'Botão do meio, embaixo', t: '🎤 Fale o que gastou', x: 'Toque aqui e diga: "gastei 50 no mercado". Eu anoto e separo por categoria. Se preferir, dá para escrever.' },
     { tela: 'gastos', alvo: '[data-novo="gasto"]', onde: 'Gastos', t: '🛒 Gastos do dia a dia', x: 'Prefere digitar? Toque em + Adicionar. Todos os gastos do mês ficam nesta tela.' },
     { tela: 'mais', alvo: '#nav [data-go="mais"]', onde: 'Último botão, embaixo', t: '☰ Mais opções', x: 'Renda, contas, cartões, sonhos, parcelados, dívidas, relatórios e ajustes ficam aqui.' },
@@ -2406,6 +2503,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') guiaFim();
 // ------------------------------------------------------------ eventos
 function bind(){
   const A = $('#app');
+  const atb = document.getElementById('at-trocar'); if (atb) atb.onclick = formAtalhos;
   document.querySelectorAll('[data-go]').forEach((b) => b.onclick = () => { if (b.dataset.aba) view.abaGastos = b.dataset.aba; else if (b.dataset.go === 'gastos') view.abaGastos = view.abaGastos || 'gastos'; go(b.dataset.go); });
   A.querySelectorAll('[data-mes]').forEach((b) => b.onclick = () => { view.ym = C.somaMes(view.ym, +b.dataset.mes); render(); });
   A.querySelectorAll('[data-pagar]').forEach((b) => b.onclick = () => { const c = S.contas.find((x) => x.id === b.dataset.pagar); const ym = view.tela === 'contas' ? view.ym : C.mesDe(hojeISO()); c.pagos = c.pagos || {}; c.pagos[ym] = !c.pagos[ym]; c.upd = Date.now(); save(); if (c.pagos[ym]) { toast('✅ ' + c.nome + ' paga. Uma preocupação a menos!'); const r = C.resumoMes(S, ym); if (r.contas.every((x) => x.pagos && x.pagos[ym])) { confete(); toast('🏆 Todas as contas do mês pagas. Parabéns!'); } } });
@@ -2648,30 +2746,76 @@ function abrirVoz(){
     setTimeout(ouvir, 250);
   });
 }
+let vozReserva = false; // se o servidor falhar, a próxima tentativa usa o reconhecimento do celular
+const opsFrase = () => ({ hoje: hoje(), categorias: S.categorias, sonhos: S.sonhos, cartoes: S.cartoes, tickets: S.tickets });
+function entendeu(t){
+  const tx = $('#vz-tx'); if (!tx) return;
+  tx.textContent = '“' + t + '”'; $('#vz-in').value = t;
+  $('#vz-hint').textContent = 'Entendi errado? Corrija a frase abaixo e toque em OK.';
+  previa(t, 'voz');
+}
 function ouvir(){
   const tx = $('#vz-tx'), mic = $('#vz-mic'); if (!tx) return;
+  // com o servidor ligado, o áudio vai para o Whisper: entende melhor valores e nomes e não corta na pausa
+  if (SERVER && cfg.audio && !vozReserva && navigator.onLine !== false && navigator.mediaDevices && window.MediaRecorder) return gravar();
   if (SR) {
     try {
-      rec = new SR(); rec.lang = 'pt-BR'; rec.interimResults = true; rec.maxAlternatives = 1; rec.continuous = false;
-      let final = '';
-      rec.onresult = (e) => { let t = ''; for (const r of e.results) t += r[0].transcript; tx.textContent = '“' + t + '”'; if (e.results[e.results.length - 1].isFinal) final = t; };
-      rec.onerror = (e) => { rec = null; mic.classList.remove('rec'); if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { if (SERVER && navigator.mediaDevices) return gravar(); tx.textContent = 'Microfone bloqueado aqui 🙈'; $('#vz-hint').textContent = 'Libere o microfone no navegador ou escreva a frase abaixo — funciona igualzinho.'; } else if (e.error === 'no-speech') { tx.textContent = 'Não ouvi nada. Toque e tente de novo 🙂'; } };
-      rec.onend = () => { mic.classList.remove('rec'); rec = null; if (final) { $('#vz-in').value = final; previa(final, 'voz'); } };
+      rec = new SR(); rec.lang = 'pt-BR'; rec.interimResults = true; rec.maxAlternatives = 5; rec.continuous = false;
+      let alts = [];
+      rec.onresult = (e) => {
+        let t = ''; for (const r of e.results) t += r[0].transcript; tx.textContent = '“' + t + '”';
+        const ult = e.results[e.results.length - 1];
+        if (ult.isFinal) { let antes = ''; for (let i = 0; i < e.results.length - 1; i++) antes += e.results[i][0].transcript; alts = []; for (let j = 0; j < ult.length; j++) alts.push(antes + ult[j].transcript); }
+      };
+      rec.onerror = (e) => { rec = null; mic.classList.remove('rec'); if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { if (SERVER && navigator.mediaDevices && window.MediaRecorder) return gravar(); tx.textContent = 'Microfone bloqueado aqui 🙈'; $('#vz-hint').textContent = 'Libere o microfone no navegador ou escreva a frase abaixo — funciona igualzinho.'; } else if (e.error === 'no-speech') { tx.textContent = 'Não ouvi nada. Toque e tente de novo 🙂'; } };
+      rec.onend = () => { mic.classList.remove('rec'); rec = null; const final = C.melhorFrase(alts, opsFrase()); if (final) entendeu(final); };
       rec.start(); mic.classList.add('rec'); tx.textContent = 'Estou ouvindo…'; return;
     } catch (e) { rec = null; }
   }
-  if (SERVER && navigator.mediaDevices) return gravar();
+  if (SERVER && navigator.mediaDevices && window.MediaRecorder) return gravar();
   tx.textContent = 'Este navegador não reconhece voz 🙈'; $('#vz-hint').textContent = 'Use o Chrome ou o teclado de voz do celular (🎤 no teclado), ou escreva abaixo.'; $('#vz-in').focus();
 }
 async function gravar(){
-  const tx = $('#vz-tx'), mic = $('#vz-mic');
+  const tx = $('#vz-tx'), mic = $('#vz-mic'), dica = $('#vz-hint');
+  let st;
+  try { st = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } }); }
+  catch (e) { tx.textContent = 'Microfone bloqueado 🙈'; dica.textContent = 'Libere o microfone no navegador ou escreva a frase abaixo — funciona igualzinho.'; return; }
+  const chunks = []; const inicio = Date.now(); let falou = false, ultimaVoz = inicio, ac = null, timer = null;
+  try { gravador = new MediaRecorder(st); } catch (e) { st.getTracks().forEach((t) => t.stop()); vozReserva = true; return ouvir(); }
+  gravador.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+  // para sozinho quando a pessoa termina de falar (1,6 s de silêncio); sem fala, para em 7 s; no máximo 25 s
   try {
-    const st = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const chunks = []; gravador = new MediaRecorder(st); gravador.ondataavailable = (e) => chunks.push(e.data);
-    gravador.onstop = async () => { st.getTracks().forEach((t) => t.stop()); gravador = null; mic.classList.remove('rec'); tx.textContent = 'Entendendo o áudio…'; try { const r = await fetch('/api/transcrever', { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': chunks[0].type || 'audio/webm' }, body: new Blob(chunks) }); const j = await r.json(); if (j.texto) { tx.textContent = '“' + j.texto + '”'; $('#vz-in').value = j.texto; previa(j.texto, 'voz'); } else tx.textContent = 'Não consegui entender. Tente de novo.'; } catch(e){ tx.textContent = 'Sem conexão para entender o áudio.'; } };
-    gravador.start(); mic.classList.add('rec'); tx.textContent = 'Gravando… toque de novo para terminar'; setTimeout(() => gravador && gravador.state === 'recording' && gravador.stop(), 15000);
-  } catch (e) { tx.textContent = 'Microfone bloqueado 🙈'; $('#vz-hint').textContent = 'Escreva a frase abaixo — funciona igualzinho.'; }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    ac = new AC(); if (ac.state === 'suspended') ac.resume().catch(() => {});
+    const an = ac.createAnalyser(); an.fftSize = 1024; ac.createMediaStreamSource(st).connect(an);
+    const amostra = new Float32Array(an.fftSize); let fundo = 0.01;
+    timer = setInterval(() => {
+      if (!gravador || gravador.state !== 'recording') return;
+      an.getFloatTimeDomainData(amostra); let soma = 0; for (const v of amostra) soma += v * v;
+      const rms = Math.sqrt(soma / amostra.length), agora = Date.now();
+      fundo = rms < fundo ? rms : fundo * 0.995 + rms * 0.005; // ruído do ambiente
+      const limiar = Math.max(0.02, fundo * 3);
+      if (rms > limiar) { falou = true; ultimaVoz = agora; }
+      if ((falou && agora - ultimaVoz > 1600) || (!falou && agora - inicio > 7000) || agora - inicio > 25000) gravador.stop();
+    }, 100);
+  } catch (e) { timer = setTimeout(() => gravador && gravador.state === 'recording' && gravador.stop(), 25000); }
+  gravador.onstop = async () => {
+    clearInterval(timer); clearTimeout(timer); try { ac && ac.close(); } catch (e) {}
+    st.getTracks().forEach((t) => t.stop()); gravador = null; mic.classList.remove('rec');
+    if (!chunks.length || Date.now() - inicio < 500) { tx.textContent = 'Não ouvi nada. Toque e tente de novo 🙂'; return; }
+    tx.textContent = 'Entendendo o áudio…'; dica.textContent = '';
+    try {
+      const r = await fetch('/api/transcrever', { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': chunks[0].type || gravadorTipo(st) }, body: new Blob(chunks, { type: chunks[0].type }) });
+      const j = await r.json().catch(() => ({}));
+      const t = C.limparFala(j.texto || '');
+      if (t) return entendeu(t);
+      if (!r.ok) { vozReserva = true; tx.textContent = r.status === 429 ? (j.erro || 'Muitos áudios agora. Espere um pouco.') : 'Não consegui entender agora. Toque no microfone de novo.'; return; }
+      tx.textContent = 'Não ouvi bem. Toque e fale de novo, ou escreva abaixo 🙂';
+    } catch (e) { vozReserva = true; tx.textContent = 'Sem conexão para entender o áudio. Toque no microfone de novo.'; }
+  };
+  gravador.start(250); mic.classList.add('rec'); tx.textContent = 'Estou ouvindo… pode falar'; dica.textContent = 'Paro sozinho quando você terminar.';
 }
+function gravadorTipo(){ return 'audio/webm'; }
 function pararVoz(){ try { rec && rec.stop(); } catch(e){} try { gravador && gravador.state === 'recording' && gravador.stop(); } catch(e){} }
 const ROTULO = { ticket_credito: '🎟️ Crédito no Ticket', pagar_fatura: '💳 Pagar fatura', config_cartao: '💳 Ajustar cartão', resgate: '💸 Retirar do sonho', gasto: '🛒 Gasto', entrada: '💰 Entrada', parcelado: '🛍️ Compra parcelada', conta: '🧾 Conta fixa', compromisso: '📌 Compromisso', sonho: '⭐ Guardar para sonho', excluir: '🗑️ Excluir', desfazer: '↩️ Desfazer', pagar_conta: '✅ Conta paga', renda_fixa: '🔁 Renda fixa', meta_sonho: '🌈 Meta de sonho' };
 function previa(frase, origem){

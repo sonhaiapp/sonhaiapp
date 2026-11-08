@@ -795,6 +795,8 @@
     if (typeof pf.whatsapp !== 'string') pf.whatsapp = String(pf.whatsapp == null ? '' : pf.whatsapp);
     if (!/^\d{2}:\d{2}$/.test(pf.lembreteHora || '')) pf.lembreteHora = '08:00';
     pf.orcamento = Number(pf.orcamento) || 0; pf.saldoInicial = Number(pf.saldoInicial) || 0;
+    // atalhos da tela inicial: até 3 nomes de tela, sem repetir
+    if ('atalhos' in pf) pf.atalhos = Array.isArray(pf.atalhos) ? [...new Set(pf.atalhos.filter((x) => typeof x === 'string' && /^[a-z]{2,20}$/.test(x)))].slice(0, 3) : [];
     if (Number(estado.perfilUpd) > Date.now() + 864e5) estado.perfilUpd = Date.now();
     for (const col of COLS_ITENS) estado[col] = Array.isArray(estado[col]) ? estado[col].filter((x) => x && typeof x === 'object' && !Array.isArray(x) && x.id) : [];
     if (!Array.isArray(estado.categorias) || !estado.categorias.length) estado.categorias = CATEGORIAS.map((c) => ({ nome: c.nome, emoji: c.emoji, cor: c.cor, limite: 0 }));
@@ -1435,6 +1437,55 @@
     return { texto: v[0], ref: v[1] };
   }
 
+  // ---------------------------------------------------------------- fala
+  // Frases que o Whisper inventa quando o áudio tem silêncio ou ruído (vêm de legendas de vídeos)
+  const ALUCINACOES = [
+    /legendas?\s+(?:pela|por|feitas? pela)\s+comunidade\s+amara\.?\s*org/gi, /amara\.org/gi,
+    /(?:obrigad[oa]|valeu)\s+por\s+(?:assistir|ver|ouvir)[^.!?]*[.!?]?/gi,
+    /inscreva-se\s+(?:no|em nosso|no nosso)\s+canal[^.!?]*[.!?]?/gi, /ative\s+o\s+sininho[^.!?]*[.!?]?/gi,
+    /deixe\s+(?:seu|o seu)\s+like[^.!?]*[.!?]?/gi, /at[eé]\s+o\s+pr[oó]ximo\s+v[ií]deo[^.!?]*[.!?]?/gi,
+    /\b(?:sous-titrage|subtitles by)[^.!?]*[.!?]?/gi, /^\s*(?:tchau[\s,!.]*)+$/i
+  ];
+  // Grafias que o reconhecimento de voz costuma errar
+  const TROCAS_FALA = [
+    [/\b(?:i|ai|ay)\s*-?\s*food\b/gi, 'iFood'], [/\bnu\s+bank\b/gi, 'Nubank'], [/\bpic\s*pay\b/gi, 'PicPay'],
+    [/\bmercado\s+pago\b/gi, 'Mercado Pago'], [/\buber\s+eats\b/gi, 'Uber Eats'],
+    [/\br\s*\$\s*/gi, 'R$ '], [/(\d)\s*reais\b/gi, '$1 reais'], [/(\d)\s+,(\d{2})\b/g, '$1,$2']
+  ];
+  /** Limpa o texto vindo de um áudio: tira frases inventadas e acerta grafias comuns. */
+  function limparFala(txt) {
+    let t = String(txt || '').replace(/\s+/g, ' ').trim();
+    for (const re of ALUCINACOES) t = t.replace(re, ' ');
+    for (const [re, por] of TROCAS_FALA) t = t.replace(re, por);
+    t = t.replace(/\s+/g, ' ').replace(/^[\s.,;!?…-]+/, '').trim();
+    // um "Obrigado." solto no fim, depois de um pedido, costuma ser inventado
+    t = t.replace(/^(.{6,}?)[.!,]?\s+(?:obrigad[oa]|tchau)[.!]*$/i, '$1');
+    t = t.replace(/[.!…]+$/, '').trim();
+    if (!/[a-z0-9à-ú]/i.test(t)) return '';
+    return t;
+  }
+  /** Entre várias versões do que a pessoa disse, fica com a que o Sonhaí entende melhor. */
+  function notaFrase(f, opts) {
+    const a = interpretar(f, opts || {});
+    let n = 0;
+    const varios = typeof separarLancamentos === 'function' ? separarLancamentos(f, opts || {}) : null;
+    if (Array.isArray(varios) && varios.length > 1) n += 6;
+    if (a.tipo && a.tipo !== 'desconhecido') n += 4;
+    if (a.valor > 0 || a.valorParcela > 0 || (Array.isArray(a.itens) && a.itens.length)) n += 2;
+    if (a.cat && a.cat !== 'Outros') n += 1;
+    if ((a.cartao && a.cartao.id) || a.sonhoId) n += 1;
+    return n;
+  }
+  function melhorFrase(frases, opts) {
+    let melhor = '', nota = -1;
+    for (const f of frases || []) {
+      const t = limparFala(f); if (!t) continue;
+      const n = notaFrase(t, opts);
+      if (n > nota) { nota = n; melhor = t; }
+    }
+    return melhor;
+  }
+
   // ---------------------------------------------------------------- mesclagem
   const COLECOES = ['lancamentos', 'contas', 'rendas', 'parcelados', 'cartoes', 'tickets', 'recargas', 'anuais', 'sonhos', 'dividas', 'agenda', 'categorias'];
   /** Junta dois estados (celular e servidor) sem perder o que veio do WhatsApp. */
@@ -1465,7 +1516,7 @@
 
   return {
     CATEGORIAS, TIPOS_ENTRADA, INCENTIVOS, MESES, sem, uid, iso, pad, brl, dataBR, mesDe, nomeMes, mesCurto, somaMes, difMeses, diasNoMes, agora,
-    VERSICULOS, versiculoDoDia, LIMITE_VALOR, LIMITE_TEXTO, sanearEstado, BANCOS, detectarCartao, garantirCartao, mesFatura, diaFechamento, vencFatura, primeiraFaturaAberta, parcelaDesde, ligarCartaoParcelado, fatura, pagarFatura, faturasAVencer, faturaDaVez, rotuloFatura,
+    limparFala, melhorFrase, VERSICULOS, versiculoDoDia, LIMITE_VALOR, LIMITE_TEXTO, sanearEstado, BANCOS, detectarCartao, garantirCartao, mesFatura, diaFechamento, vencFatura, primeiraFaturaAberta, parcelaDesde, ligarCartaoParcelado, fatura, pagarFatura, faturasAVencer, faturaDaVez, rotuloFatura,
     NOME_TICKET, COR_TICKET, detectarTicket, garantirTicket, saldoTicket, gastoTicketMes, extratoTicket, excluirTicket,
     conversar, interpretar, separarLancamentos, lancarVarios, aplicar, remover, marcarExcluido, acharExclusao, descreverAlvo, valorConta, definirValorConta, encerrarConta, garantirRendas, acharSonho, retirarDoSonho, estadoVazio, marcarPrimeiroAcesso, resumoMes, mesesComDados, parcelaNoMes, contaNoMes, contasAVencer, contasAtrasadas, totalSonho,
     textoResumo, textoContas, textoAgenda, textoAjuda, mensagemHumor, barra, mesclar, adivinharCategoria, extrairValor, extrairData, extrairHora

@@ -9,11 +9,13 @@ const confere = (nome, real, esperado) => { const a = JSON.stringify(real), b = 
 const espera = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ---------------------------------------------------------- serviços simulados
-const saida = { zap: [], tg: [], email: [] };
-const zerar = () => { saida.zap = []; saida.tg = []; saida.email = []; };
+const saida = { zap: [], tg: [], email: [], audio: [] };
+let textoAudio = '';
+const zerar = () => { saida.zap = []; saida.tg = []; saida.email = []; saida.audio = []; };
 const simulador = http.createServer((req, res) => {
   let c = ''; req.on('data', (d) => c += d); req.on('end', () => {
-    const j = c ? JSON.parse(c) : {};
+    if (req.url.includes('/audio/transcriptions')) { saida.audio.push(c); res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ text: textoAudio })); }
+    let j = {}; try { j = c ? JSON.parse(c) : {}; } catch (e) { j = { bruto: c }; }
     const manda = (o) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
     if (req.url.includes('/getMe')) return manda({ ok: true, result: { username: 'SonhaiTesteBot' } });
     if (req.url.includes('/sendMessage')) { saida.tg.push(j); return manda({ ok: true, result: {} }); }
@@ -239,6 +241,34 @@ const zapEntra = async (de, texto, id) => { const corpo = JSON.stringify({ entry
   await ligar({ WHATSAPP_TOKEN: 'x', WHATSAPP_PHONE_ID: 'y', WHATSAPP_APP_SECRET: SEG });
   zerar(); await ciclo();
   confere('sem nada para lembrar, não gasta mensagem', saida.zap.filter((m) => m.to.endsWith('77770000')).length, 0);
+  await desligar();
+
+  // ================================================================ áudio
+  const campo = (corpo, nome) => { const m = corpo.match(new RegExp('name="' + nome + '"\\r\\n\\r\\n([\\s\\S]*?)\\r\\n--')); return m ? m[1] : null; };
+  await ligar({ GROQ_API_KEY: 'g', GROQ_API_BASE: 'http://127.0.0.1:3198/openai/v1' });
+  confere('app sabe que o servidor entende áudio', (await req('GET', '/api/config')).j.audio, true);
+  const gi = await cadastro('Gil', '16912340000', 'gil@x.com');
+  const eg = (await req('GET', '/api/estado', null, gi.j.token)).j.estado;
+  eg.cartoes = [{ id: 'k1', nome: 'Sicredi Black', cor: '#000000', diaVenc: 10, faturas: {}, upd: Date.now() }]; eg.sonhos = [{ id: 's1', nome: 'Viagem Gramado', emoji: '⭐', custo: 5000, aportes: [], upd: Date.now() }];
+  await req('PUT', '/api/estado', { estado: eg }, gi.j.token);
+  zerar(); textoAudio = 'Gastei 2 mil no conserto do carro. Legendas pela comunidade Amara.org';
+  const tr = await fetch(B + '/api/transcrever', { method: 'POST', headers: { Authorization: 'Bearer ' + gi.j.token, 'Content-Type': 'audio/webm' }, body: Buffer.from('audio-de-teste') }).then((r) => r.json());
+  confere('app: texto limpo', tr.texto, 'Gastei 2 mil no conserto do carro');
+  const corpoA = saida.audio[0] || '';
+  confere('modelo mais preciso, sem variação e em português', [campo(corpoA, 'model'), campo(corpoA, 'temperature'), campo(corpoA, 'language')], ['whisper-large-v3', '0', 'pt']);
+  confere('prompt com os nomes da pessoa', [/Sicredi Black/.test(campo(corpoA, 'prompt') || ''), /Viagem Gramado/.test(campo(corpoA, 'prompt') || ''), (campo(corpoA, 'prompt') || '').length <= 700], [true, true, true]);
+  zerar(); textoAudio = 'Obrigado por assistir!';
+  const tv = await fetch(B + '/api/transcrever', { method: 'POST', headers: { Authorization: 'Bearer ' + gi.j.token, 'Content-Type': 'audio/webm' }, body: Buffer.from('silencio') }).then((r) => r.json());
+  confere('silêncio não vira frase inventada', tv.texto, '');
+  confere('sem login não transcreve', (await fetch(B + '/api/transcrever', { method: 'POST', body: 'x' })).status, 401);
+  await conectarTelegram(gi.j.token, 999);
+  zerar(); textoAudio = 'Gastei 2 mil no conserto do carro. Obrigado.';
+  await telegram({ chat: { id: 999 }, voice: { file_id: 'v1', mime_type: 'audio/ogg', file_size: 1000 } }); await espera(300);
+  confere('Telegram: áudio vira o gasto certo', /Entendi: "Gastei 2 mil no conserto do carro"/.test((saida.tg.slice(-1)[0] || {}).text || ''), true);
+  confere('Telegram: lançou R$ 2.000', (await req('GET', '/api/estado', null, gi.j.token)).j.estado.lancamentos.map((l) => l.valor), [2000]);
+  zerar(); textoAudio = 'blá blá blá';
+  await telegram({ chat: { id: 999 }, voice: { file_id: 'v2', mime_type: 'audio/ogg', file_size: 1000 } }); await espera(300);
+  confere('Telegram: não entendeu, pede para repetir ou escrever', /repetir mais devagar ou escrever/.test((saida.tg.slice(-1)[0] || {}).text || ''), true);
   await desligar();
 
   simulador.close();

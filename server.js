@@ -365,19 +365,31 @@ async function baixarMidia(id) {
   if (!r.ok) throw new Error('mídia ' + r.status);
   return { buf: Buffer.from(await r.arrayBuffer()), tipo: meta.mime_type || 'audio/ogg' };
 }
-async function transcrever(buf, tipo) {
+// Vocabulário que ajuda o Whisper a escrever valores, bancos e lojas do jeito certo
+const VOCAB_AUDIO = 'Gastei R$ 45,90 no mercado. Paguei R$ 120 de luz. Comprei uma TV de R$ 2.000 em 10x no cartão Nubank. Guardei R$ 200 para a viagem. Recebi R$ 3.500 de salário. Caiu R$ 800 no ticket. Dentista amanhã às 15h. iFood, Uber, Pix, Itaú, Bradesco, Santander, Caixa, Inter, C6, padaria, farmácia, posto, gasolina, fatura, parcela, boleto.';
+/** O prompt leva também os nomes que a própria pessoa usa: cartões, sonhos, contas e categorias. */
+function promptAudio(u) {
+  const e = (u && u.estado) || {};
+  const nomes = [...new Set([...(e.cartoes || []), ...(e.sonhos || []), ...(e.contas || []), ...(e.rendas || [])].map((x) => x && x.nome)
+    .concat((e.categorias || []).filter((c) => c && !CC.CATEGORIAS.some((p) => p.nome === c.nome)).map((c) => c.nome))
+    .filter((n) => typeof n === 'string' && n.trim()).map((n) => n.trim().slice(0, 30)))].slice(0, 25);
+  return (VOCAB_AUDIO + (nomes.length ? ' ' + nomes.join(', ') + '.' : '')).slice(0, 700);
+}
+async function transcrever(buf, tipo, u) {
   if (!CFG.groq && !CFG.openai) throw new Error('Configure GROQ_API_KEY (grátis) ou OPENAI_API_KEY para entender áudios.');
   const ext = /mpeg|mp3/.test(tipo) ? 'mp3' : /mp4|m4a|aac/.test(tipo) ? 'm4a' : /webm/.test(tipo) ? 'webm' : /wav/.test(tipo) ? 'wav' : 'ogg';
   const fd = new FormData();
   fd.append('file', new Blob([buf], { type: tipo.split(';')[0] }), 'audio.' + ext);
-  fd.append('model', CFG.modeloAudio || (CFG.groq ? 'whisper-large-v3-turbo' : 'whisper-1'));
+  // large-v3 erra menos que o turbo (Groq: 10,3% contra 12% de palavras erradas)
+  fd.append('model', CFG.modeloAudio || (CFG.groq ? 'whisper-large-v3' : 'whisper-1'));
   fd.append('language', 'pt');
-  fd.append('prompt', 'Gastos, contas e compromissos em reais. Ex.: gastei 45,90 no mercado; conta de luz vence dia 10; dentista amanhã às 15h.');
+  fd.append('temperature', '0');
+  fd.append('prompt', promptAudio(u));
   const base = CFG.groq ? (process.env.GROQ_API_BASE || 'https://api.groq.com/openai/v1') : 'https://api.openai.com/v1';
   const r = await fetch(base + '/audio/transcriptions', { method: 'POST', headers: { Authorization: 'Bearer ' + (CFG.groq || CFG.openai) }, body: fd });
   const j = await r.json();
   if (!r.ok) throw new Error('transcrição: ' + JSON.stringify(j.error || j));
-  return String(j.text || '').trim();
+  return CC.limparFala(j.text || '');
 }
 
 // ------------------------------------------------------------------ Telegram (grátis)
@@ -425,7 +437,7 @@ async function tgReceber(msg) {
       if (bloqueado('aud:' + chaveFone(u.fone), 60)) return tgEnviar(chatId, 'Muitos áudios em pouco tempo. Espere alguns minutos. 🙂'); errou('aud:' + chaveFone(u.fone));
       const f = await tgApi('getFile', { file_id: (msg.voice || msg.audio).file_id });
       const r = await fetch(`${TG_API}/file/bot${CFG.tgToken}/${f.file_path}`);
-      const txt = await transcrever(Buffer.from(await r.arrayBuffer()), (msg.voice || msg.audio).mime_type || 'audio/ogg');
+      const txt = await transcrever(Buffer.from(await r.arrayBuffer()), (msg.voice || msg.audio).mime_type || 'audio/ogg', u);
       if (!txt) throw new Error('vazio');
       return processar(u, txt, true, 'telegram');
     } catch (e) { log('áudio telegram', e.message); return tgEnviar(chatId, '🙈 Não consegui entender o áudio. Pode repetir ou escrever?'); }
@@ -492,7 +504,7 @@ async function processar(u, texto, origemAudio, canal) {
   const acao = r.acao || {};
   if (r.ok && r.colecao) u.rev++;
   let resp = r.msg;
-  if (origemAudio) resp = `🎤 Entendi: "${texto}"\n\n` + resp;
+  if (origemAudio) resp = `🎤 Entendi: "${texto}"\n\n` + resp + (acao.tipo === 'desconhecido' ? '\n\nSe eu ouvi errado, pode repetir mais devagar ou escrever a frase. ✍️' : '');
   if (r.podeDesfazer) resp += '\n\nErrou? Responda *desfazer*.';
   await env(resp);
 }
@@ -691,7 +703,7 @@ const servidor = http.createServer(async (req, res) => {
               u.ultimaMsg = Date.now();
               if (bloqueado('aud:' + chaveFone(u.fone), 60)) return enviar(u, 'Muitos áudios em pouco tempo. Espere alguns minutos. 🙂', { canal: 'whatsapp' });
               errou('aud:' + chaveFone(u.fone));
-              try { const m = await baixarMidia(msg.audio.id); const txt = await transcrever(m.buf, m.tipo); if (!txt) throw new Error('vazio'); await receber(msg.from, txt, true); }
+              try { const m = await baixarMidia(msg.audio.id); const txt = await transcrever(m.buf, m.tipo, u); if (!txt) throw new Error('vazio'); await receber(msg.from, txt, true); }
               catch (e) { log('áudio', e.message); await enviar(u, '🙈 Não consegui entender o áudio. Pode repetir ou escrever?', { canal: 'whatsapp' }); }
             } else if (msg.type === 'interactive' || msg.type === 'button') {
               const t = (msg.button && msg.button.text) || (msg.interactive && (msg.interactive.button_reply || msg.interactive.list_reply || {}).title) || '';
@@ -708,7 +720,7 @@ const servidor = http.createServer(async (req, res) => {
       if (USA_SB && Date.now() - (global.ultimoToqueSB || 0) > 6 * 3600e3) { global.ultimoToqueSB = Date.now(); sb('GET', 'kv?select=chave&limit=1').catch((e) => log('saúde', e.message)); }
       return json(res, 200, { ok: true, whatsapp: !DEMO, banco: USA_SB ? 'supabase' : 'arquivo', usuarios: Object.keys(DB.usuarios).length });
     }
-    if (rota === '/api/config') return json(res, 200, { whatsapp: DEMO ? '' : process.env.WHATSAPP_NUMERO_EXIBICAO || '', demo: DEMO, telegram: TG_BOT, cadastroAberto: !(DB.config && DB.config.cadastroAberto === false), suporte: suporte(), email: EMAIL_LIGADO, retencao: CFG.retencao, assinatura: CFG.assinatura });
+    if (rota === '/api/config') return json(res, 200, { audio: !!(CFG.groq || CFG.openai), whatsapp: DEMO ? '' : process.env.WHATSAPP_NUMERO_EXIBICAO || '', demo: DEMO, telegram: TG_BOT, cadastroAberto: !(DB.config && DB.config.cadastroAberto === false), suporte: suporte(), email: EMAIL_LIGADO, retencao: CFG.retencao, assinatura: CFG.assinatura });
     if (rota === '/api/acesso') {
       const c = pega(DB.convites, H(url.searchParams.get('c') || ''));
       const u = c && DB.usuarios[c.k];
@@ -962,7 +974,7 @@ const servidor = http.createServer(async (req, res) => {
       const u = autenticar(req); if (!u) return json(res, 401, { erro: 'não autorizado' });
       if (bloqueado('aud:' + chaveFone(u.fone), 60)) return json(res, 429, { erro: 'Muitos áudios em pouco tempo. Espere alguns minutos.' }); errou('aud:' + chaveFone(u.fone));
       const buf = await lerCorpo(req);
-      try { return json(res, 200, { texto: await transcrever(buf, req.headers['content-type'] || 'audio/webm') }); }
+      try { return json(res, 200, { texto: await transcrever(buf, req.headers['content-type'] || 'audio/webm', u) }); }
       catch (e) { log('transcrição', e.message); return json(res, 500, { erro: 'Não consegui entender o áudio. Pode repetir ou escrever?' }); }
     }
     // simulador para testes locais (sem WhatsApp configurado) ou com chave de administrador
