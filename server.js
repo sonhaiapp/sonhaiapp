@@ -658,9 +658,10 @@ function dadosDaConta(u) {
 }
 function csvDaConta(u) {
   const L = (u.estado.lancamentos || []).slice().sort((a, b) => String(a.data).localeCompare(String(b.data)));
-  const linhas = [['Data', 'Tipo', 'Descrição', 'Categoria', 'Valor', 'Pagamento'].join(';')];
-  for (const l of L) linhas.push([l.data, l.tipo === 'entrada' ? 'Entrada' : 'Gasto', l.desc, l.cat, String(Number(l.valor) || 0).replace('.', ','), l.pagamento || ''].map(csvCampo).join(';'));
-  for (const r of u.estado.recargas || []) linhas.push([r.data, 'Cr\u00e9dito no Ticket', r.desc || 'Cr\u00e9dito', '', String(Number(r.valor) || 0).replace('.', ','), 'Ticket'].map(csvCampo).join(';'));
+  const linhas = [['Data', 'Tipo', 'Descrição', 'Categoria', 'Valor', 'Pagamento', 'Mês do orçamento'].join(';')];
+  const mesOrc = (l) => { const m = CC.mesCompetencia(u.estado, l); return m ? m.slice(5, 7) + '/' + m.slice(0, 4) : ''; };
+  for (const l of L) linhas.push([l.data, l.tipo === 'entrada' ? 'Entrada' : 'Gasto', l.desc, l.cat, String(Number(l.valor) || 0).replace('.', ','), l.pagamento || '', mesOrc(l)].map(csvCampo).join(';'));
+  for (const r of u.estado.recargas || []) linhas.push([r.data, 'Cr\u00e9dito no Ticket', r.desc || 'Cr\u00e9dito', '', String(Number(r.valor) || 0).replace('.', ','), 'Ticket', String(r.data || '').slice(5, 7) + '/' + String(r.data || '').slice(0, 4)].map(csvCampo).join(';'));
   return '\ufeff' + linhas.join('\r\n');
 }
 const ARQ_GZ = new Map(); // os arquivos só mudam com uma nova publicação

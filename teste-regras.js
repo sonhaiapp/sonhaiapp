@@ -253,5 +253,63 @@ confere('versões vazias', CC.melhorFrase(['', 'Obrigado por assistir'], { hoje:
 { const e = novo(); CC.sanearEstado(e); confere('conta sem atalhos não ganha campo', 'atalhos' in e.perfil, false); }
 { const a = novo(), b = novo(); b.perfil.atalhos = ['agenda', 'rendas', 'gastos']; b.perfilUpd = Date.now() + 1000; confere('atalhos passam de um aparelho para o outro', CC.mesclar(a, b).perfil.atalhos, ['agenda', 'rendas', 'gastos']); }
 
+// ---------------------------------------------------------------- v1.14: cartão conta no mês em que a fatura vence
+{
+  const h = new Date(2026, 10, 14, 19, 0); // 14/11/2026
+  const cartao = (e, nome, venc, fech) => { fala(e, `a fatura do ${nome} vence dia ${venc} e fecha dia ${fech}`, h); return e.cartoes.find((c) => CC.sem(c.nome).includes(CC.sem(nome))); };
+  const e = novo(); fala(e, 'gastei 1 no cartão de crédito Itaú', h); CC.remover(e, 'lancamentos', e.lancamentos[0].id);
+  const it = cartao(e, 'Itaú', 10, 3);
+  const r = fala(e, 'gastei 100 no mercado no cartão de crédito Itaú', h);
+  const l = e.lancamentos[e.lancamentos.length - 1];
+  confere('fecha 3/vence 10: compra 14/11 vai para dezembro', CC.mesCompetencia(e, l), '2026-12');
+  confere('compra depois do fechamento não desconta de novembro', CC.resumoMes(e, '2026-11').gastoTotal, 0);
+  confere('compra depois do fechamento desconta de dezembro', CC.resumoMes(e, '2026-12').gastoTotal, 100);
+  confere('categoria de dezembro recebe a compra', CC.resumoMes(e, '2026-12').porCategoria.Mercado, 100);
+  confere('mensagem avisa o mês do orçamento', /orçamento de \*dezembro/.test(r.msg), true);
+  confere('fatura de dezembro continua com a compra', CC.fatura(e, it.id, CC.mesFatura(it, '2026-11-14'), h).total, 100);
+  confere('resumo de novembro mostra o que fica para o mês que vem', [CC.resumoMes(e, '2026-11').cartaoAdiante, /mês que vem: R\$\s?100,00/.test(CC.textoResumo(e, '2026-11', h))], [100, true]);
+  confere('"quanto gastei com mercado" em novembro não conta a compra', /Não achei/.test(fala(e, 'quanto gastei com mercado', h).msg), true);
+  const l2 = { tipo: 'gasto', data: '2026-11-01', cartaoId: it.id, valor: 10 };
+  confere('compra antes do fechamento fica em novembro', CC.mesCompetencia(e, l2), '2026-11');
+  confere('compra no dia do fechamento já vai para a próxima', CC.mesCompetencia(e, { tipo: 'gasto', data: '2026-11-03', cartaoId: it.id }), '2026-12');
+  confere('compra em 31/12 vai para janeiro do ano seguinte', CC.mesCompetencia(e, { tipo: 'gasto', data: '2026-12-31', cartaoId: it.id }), '2027-01');
+  const nu = cartao(e, 'Nubank', 5, 25);
+  confere('fecha 25/vence 5: compra 10/11 conta em dezembro', CC.mesCompetencia(e, { tipo: 'gasto', data: '2026-11-10', cartaoId: nu.id }), '2026-12');
+  confere('fecha 25/vence 5: compra 26/11 conta em janeiro', CC.mesCompetencia(e, { tipo: 'gasto', data: '2026-11-26', cartaoId: nu.id }), '2027-01');
+  const c31 = cartao(e, 'Bradesco', 7, 31);
+  confere('fecha 31 em fevereiro: dia 28 já é fechamento', CC.mesCompetencia(e, { tipo: 'gasto', data: '2027-02-28', cartaoId: c31.id }), '2027-04');
+  confere('fecha 31 em fevereiro: dia 27 entra na fatura de fevereiro', CC.mesCompetencia(e, { tipo: 'gasto', data: '2027-02-27', cartaoId: c31.id }), '2027-03');
+  confere('pix e dinheiro continuam no mês da data', [CC.mesCompetencia(e, { tipo: 'gasto', data: '2026-11-14', pagamento: 'Pix' }), CC.mesCompetencia(e, { tipo: 'entrada', data: '2026-11-30' })], ['2026-11', '2026-11']);
+  confere('cartão que não existe mais volta para a data da compra', CC.mesCompetencia(e, { tipo: 'gasto', data: '2026-11-14', cartaoId: 'sumiu' }), '2026-11');
+  // pagar a fatura não desconta duas vezes
+  fala(e, 'paguei a fatura do Itaú', new Date(2026, 11, 10, 9, 0));
+  confere('pagar a fatura não muda o gasto de dezembro', CC.resumoMes(e, '2026-12').gastoTotal, 100);
+}
+{
+  const h = new Date(2026, 10, 10, 19, 0);
+  const e = novo(); fala(e, 'gastei 1 no cartão Nubank', h); CC.remover(e, 'lancamentos', e.lancamentos[0].id);
+  fala(e, 'a fatura do Nubank vence dia 5 e fecha dia 25', h);
+  fala(e, 'comprei uma TV de 1000 em 10x no cartão Nubank', h);
+  confere('parcelada fecha 25/vence 5: 1ª parcela em dezembro', [CC.resumoMes(e, '2026-11').parcelas, CC.resumoMes(e, '2026-12').parcelas], [0, 100]);
+  confere('parcelada fecha 25/vence 5: 10ª e última em setembro/2027', [CC.resumoMes(e, '2027-09').parcelas, CC.resumoMes(e, '2027-10').parcelas], [100, 0]);
+  const e2 = novo(); fala(e2, 'gastei 1 no cartão Itaú', h); CC.remover(e2, 'lancamentos', e2.lancamentos[0].id);
+  fala(e2, 'a fatura do Itaú vence dia 10 e fecha dia 3', h);
+  fala(e2, 'comprei uma TV de 1000 em 10x no cartão Itaú', h);
+  confere('parcelada fecha 3/vence 10 comprada dia 10: começa em dezembro', [CC.resumoMes(e2, '2026-11').parcelas, CC.resumoMes(e2, '2026-12').parcelas], [0, 100]);
+  const e3 = novo(); fala(e3, 'comprei uma TV de 1000 em 10x', h);
+  confere('parcelada sem cartão continua igual', CC.resumoMes(e3, '2026-11').parcelas, 100);
+}
+{
+  const h = new Date(2026, 11, 20, 19, 0);
+  const e = novo(); e.perfil.saldoInicial = 0;
+  fala(e, 'recebi 1000 de salário', h);
+  fala(e, 'gastei 1 no cartão Itaú', h); CC.remover(e, 'lancamentos', e.lancamentos.find((l) => l.valor === 1).id);
+  fala(e, 'a fatura do Itaú vence dia 10 e fecha dia 3', h);
+  fala(e, 'gastei 300 no mercado no cartão Itaú', h);
+  confere('saldo acumulado leva a compra para janeiro', [CC.resumoMes(e, '2026-12').saldoAcum, CC.resumoMes(e, '2027-01').saldoAcum], [1000, 700]);
+  const ex = CC.resumoMes(e, '2026-12');
+  confere('alerta do orçamento usa o mês certo', ex.gastoTotal, 0);
+}
+
 console.log(`\n${falhas ? '⚠️' : '✅'} ${ok} testes passaram, ${falhas} falharam.`);
 process.exit(falhas ? 1 : 0);

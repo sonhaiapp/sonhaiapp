@@ -417,6 +417,31 @@
     const m = v > diaFechamento(cartao) ? ym : somaMes(ym, 1);
     return m + '-' + pad(Math.min(v, diasNoMes(m)));
   }
+  /** Mês do orçamento da fatura `ym`: o mês em que ela vence, que é quando a pessoa paga. */
+  function mesVencFatura(cartao, ym) { return mesDe(vencFatura(cartao, ym)); }
+  function mapaCartoes(estado) { const m = {}; for (const c of estado.cartoes || []) m[c.id] = c; return m; }
+  /**
+   * Mês do orçamento (competência) de um lançamento.
+   * Compra no cartão de crédito conta no mês em que vence a fatura em que ela cai:
+   * comprou depois do fechamento, vai para a fatura seguinte e para o orçamento do mês seguinte.
+   * Todo o resto (dinheiro, pix, débito, ticket, entradas) conta no mês da data.
+   */
+  function mesCompetencia(estado, l, mapa) {
+    if (!l || !l.data) return '';
+    const c = l.tipo === 'gasto' && l.cartaoId && !l.ticket ? (mapa || mapaCartoes(estado))[l.cartaoId] : null;
+    return c ? mesVencFatura(c, mesFatura(c, l.data)) : mesDe(l.data);
+  }
+  /** Lançamentos que entram no orçamento do mês `ym`. */
+  function lancamentosDoMes(estado, ym) {
+    const mapa = mapaCartoes(estado);
+    return (estado.lancamentos || []).filter((l) => mesCompetencia(estado, l, mapa) === ym);
+  }
+  /** Parcela que entra no orçamento do mês `ym`. No cartão, é a parcela da fatura que vence nesse mês. */
+  function parcelaCompetencia(estado, p, ym, mapa) {
+    const c = p && p.cartaoId ? (mapa || mapaCartoes(estado))[p.cartaoId] : null;
+    if (!c) return parcelaNoMes(p, ym);
+    return parcelaNoMes(p, somaMes(ym, -difMeses(ym, mesVencFatura(c, ym))));
+  }
   /** Primeira fatura do cartão que ainda não tinha vencido na data informada. */
   function primeiraFaturaAberta(cartao, quando) {
     const d = iso(quando instanceof Date ? quando : new Date(quando));
@@ -917,15 +942,17 @@
         estado.lancamentos.push(item);
         let txtCartao = '';
         if (tkc) { const sd = saldoTicket(estado, tkc.id); txtCartao = `\n🎟️ Pago no *${tkc.nome}*. Saldo: ${brl(sd)}.` + (sd < 0 ? '\n⚠️ O saldo ficou negativo. Se já caiu crédito, me diga: "caiu 800 no ticket".' : ''); }
-        else if (cc) { const f = fatura(estado, cc.id, mesFatura(cc, acao.data), hoje); txtCartao = `\n💳 Lançado no cartão *${cc.nome}* — fatura que vence em ${dataBR(f.venc)}: ${brl(f.total)}.`; if (acao.cartao.novo) txtCartao += `\n💡 Para acertar as datas, me diga: "a fatura do ${cc.nome} vence dia 10 e fecha dia 3".`; }
+        else if (cc) { const f = fatura(estado, cc.id, mesFatura(cc, acao.data), hoje); txtCartao = `\n💳 Lançado no cartão *${cc.nome}* — fatura que vence em ${dataBR(f.venc)}: ${brl(f.total)}.` + (mesDe(f.venc) !== mesDe(acao.data) ? `\n🗓️ Entra no orçamento de *${nomeMes(mesDe(f.venc))}*, quando você paga a fatura.` : ''); if (acao.cartao.novo) txtCartao += `\n💡 Para acertar as datas, me diga: "a fatura do ${cc.nome} vence dia 10 e fecha dia 3".`; }
         else if (acao.pagamento && acao.pagamento !== 'Cartão') txtCartao = `\n✅ Pago no ${acao.pagamento === 'Dinheiro' ? 'dinheiro' : acao.pagamento} — já saiu do seu saldo do mês.`;
         else if (acao.cartaoSemBanco) txtCartao = (estado.cartoes || []).length ? `\n💳 Em qual cartão? Diga, por ex.: "no cartão ${(estado.cartoes[0] || {}).nome}".` : '\n💳 Dica: diga o banco ("cartão de crédito Itaú") que eu separo por cartão.';
-        const r = resumoMes(estado, mesDe(acao.data));
+        const ymOrc = mesCompetencia(estado, item);
+        const r = resumoMes(estado, ymOrc);
+        const qualOrc = ymOrc === mesDe(iso(hoje)) ? (ymOrc === mesDe(acao.data) ? ' do mês' : '') : ` de ${nomeMes(ymOrc)}`;
         let extra = '';
         if (r.orcamento > 0 && !tkc) {
-          if (r.pctOrcamento >= 1) extra = `\n⚠️ Atenção: você passou do orçamento do mês (${Math.round(r.pctOrcamento * 100)}%). Vamos segurar um pouquinho? 💛`;
-          else if (r.pctOrcamento >= 0.85) extra = `\n🟡 Você já usou ${Math.round(r.pctOrcamento * 100)}% do orçamento. Faltam ${brl(r.orcamento - r.gastoTotal)}.`;
-          else extra = `\n✅ Orçamento sob controle: ${Math.round(r.pctOrcamento * 100)}% usado.`;
+          if (r.pctOrcamento >= 1) extra = `\n⚠️ Atenção: você passou do orçamento${qualOrc} (${Math.round(r.pctOrcamento * 100)}%). Vamos segurar um pouquinho? 💛`;
+          else if (r.pctOrcamento >= 0.85) extra = `\n🟡 Você já usou ${Math.round(r.pctOrcamento * 100)}% do orçamento${qualOrc}. Faltam ${brl(r.orcamento - r.gastoTotal)}.`;
+          else extra = `\n✅ Orçamento${qualOrc} sob controle: ${Math.round(r.pctOrcamento * 100)}% usado.`;
         }
         const lim = catInfo(acao.cat).limite;
         if (lim > 0) { const g = r.porCategoria[acao.cat] || 0; if (g > lim) extra += `\n🔔 ${acao.cat} passou do limite de ${brl(lim)}.`; }
@@ -1045,7 +1072,7 @@
         return { ok: true, msg: `🔝 Seu maior gasto em ${nomeMes(ymM)} é *${rm.maiorCategoria.nome}*: ${brl(rm.maiorCategoria.valor)} (${Math.round(rm.maiorCategoria.valor / totM * 100)}% do total).` };
       }
       case 'consulta_gasto': {
-        const achados = (estado.lancamentos || []).filter((l) => l.tipo === 'gasto' && mesDe(l.data) === acao.ym && (acao.cat ? l.cat === acao.cat : sem(l.desc + ' ' + l.cat).includes(acao.termo)));
+        const achados = lancamentosDoMes(estado, acao.ym).filter((l) => l.tipo === 'gasto' && (acao.cat ? l.cat === acao.cat : sem(l.desc + ' ' + l.cat).includes(acao.termo)));
         const totC = acao.cat ? centavos(resumoMes(estado, acao.ym).porCategoria[acao.cat] || 0) : centavos(somaValor(achados));
         if (!totC) return { ok: true, msg: `🔎 Não achei gastos com ${acao.cat || acao.termo} em ${nomeMes(acao.ym)}.` };
         return { ok: true, msg: `🔎 Em ${nomeMes(acao.ym)} você gastou ${brl(totC)} com *${acao.cat || acao.termo}*${achados.length ? ` (${achados.length} ${achados.length === 1 ? 'lançamento' : 'lançamentos'})` : ''}.` };
@@ -1269,7 +1296,7 @@
   }
 
   function resumoMes(estado, ym) {
-    const L = (estado.lancamentos || []).filter((l) => mesDe(l.data) === ym);
+    const L = lancamentosDoMes(estado, ym);
     const entradasReais = L.filter((l) => l.tipo === 'entrada').reduce((a, b) => a + b.valor, 0);
     // renda fixa que ainda vai cair neste mês
     const previsto = (estado.rendas || []).filter((r) => contaNoMes(r, ym) && !(r.lancados && r.lancados[ym])).reduce((a, b) => a + valorConta(b, ym), 0);
@@ -1279,7 +1306,8 @@
     const contas = (estado.contas || []).filter((c) => contaNoMes(c, ym));
     const fixas = contas.reduce((a, b) => a + valorConta(b, ym), 0);
     const fixasPagas = contas.filter((c) => c.pagos && c.pagos[ym]).reduce((a, b) => a + valorConta(b, ym), 0);
-    const parcs = (estado.parcelados || []).map((p) => ({ p, k: parcelaNoMes(p, ym) })).filter((x) => x.k);
+    const mapaC = mapaCartoes(estado);
+    const parcs = (estado.parcelados || []).map((p) => ({ p, k: parcelaCompetencia(estado, p, ym, mapaC) })).filter((x) => x.k);
     const parcelas = parcs.reduce((a, b) => a + b.p.valor, 0);
     const guardado = (estado.sonhos || []).reduce((a, s) => a + (s.aportes || []).filter((x) => mesDe(x.data) === ym && contaNoGuardado(x)).reduce((q, w) => q + (Number(w.valor) || 0), 0), 0);
     const anuaisMes = (estado.anuais || []).filter((a) => +a.mes === +ym.slice(5, 7));
@@ -1298,7 +1326,11 @@
     if (meses.length) for (let m = meses[0], i = 0; m < ym && i < 600; m = somaMes(m, 1), i++) saldoAcum += resumoSimples(estado, m);
     saldoAcum += sobra;
     const maior = Object.entries(porCategoria).sort((a, b) => b[1] - a[1])[0];
+    // compras no cartão feitas neste mês que só entram no orçamento de um mês seguinte (a fatura já tinha fechado)
+    const adiante = (estado.lancamentos || []).filter((l) => l.tipo === 'gasto' && l.cartaoId && mesDe(l.data) === ym && mesCompetencia(estado, l, mapaC) > ym);
+    const cartaoAdiante = centavos(somaValor(adiante));
     return {
+      adiante, cartaoAdiante,
       ym, entradas, entradasReais, previsto, gastosDia, ticketGasto, fixas, fixasPagas, parcelas, parcs, contas, guardado, gastoTotal, sobraAntes, sobra, saldoAcum, porCategoria, orcamento,
       pctOrcamento: orcamento > 0 ? gastoTotal / orcamento : 0, pctGuardado: entradas > 0 ? guardado / entradas : 0,
       maiorCategoria: maior ? { nome: maior[0], valor: maior[1] } : null, anuaisMes, lancamentos: L,
@@ -1307,17 +1339,19 @@
     };
   }
   function resumoSimples(estado, ym) {
-    const L = (estado.lancamentos || []).filter((l) => mesDe(l.data) === ym);
+    const L = lancamentosDoMes(estado, ym);
     const e = L.filter((l) => l.tipo === 'entrada').reduce((a, b) => a + b.valor, 0);
     const g = L.filter((l) => l.tipo === 'gasto' && !l.ticket).reduce((a, b) => a + b.valor, 0);
     const f = (estado.contas || []).filter((c) => contaNoMes(c, ym)).reduce((a, b) => a + valorConta(b, ym), 0);
-    const p = (estado.parcelados || []).filter((x) => parcelaNoMes(x, ym)).reduce((a, b) => a + b.valor, 0);
+    const mapaC = mapaCartoes(estado);
+    const p = (estado.parcelados || []).filter((x) => parcelaCompetencia(estado, x, ym, mapaC)).reduce((a, b) => a + b.valor, 0);
     const s = (estado.sonhos || []).reduce((a, q) => a + (q.aportes || []).filter((x) => mesDe(x.data) === ym && contaNoGuardado(x)).reduce((z, w) => z + (Number(w.valor) || 0), 0), 0);
     return e - g - f - p - s;
   }
   function mesesComDados(estado) {
     const set = new Set();
-    (estado.lancamentos || []).forEach((l) => set.add(mesDe(l.data)));
+    const mapaC = mapaCartoes(estado);
+    (estado.lancamentos || []).forEach((l) => set.add(mesCompetencia(estado, l, mapaC)));
     (estado.sonhos || []).forEach((s) => (s.aportes || []).forEach((a) => set.add(mesDe(a.data))));
     return Array.from(set).sort();
   }
@@ -1350,6 +1384,7 @@
     const nome = estado.perfil && estado.perfil.nome ? estado.perfil.nome : '';
     let s = `📊 *Resumo de ${nomeMes(ym)}*${nome ? ' — ' + nome : ''}\n\n💰 Entrou: ${brl(r.entradasReais)}${r.previsto ? `\n   • Ainda vai cair: ${brl(r.previsto)}` : ''}\n🛒 Gastos: ${brl(r.gastoTotal)}\n   • Contas fixas: ${brl(r.fixas)}\n   • Dia a dia: ${brl(r.gastosDia)}\n   • Parcelas: ${brl(r.parcelas)}\n⭐ Guardei p/ sonhos: ${brl(r.guardado)}\n✅ Sobrou: ${brl(r.sobra)}`;
     for (const c of estado.tickets || []) s += `\n🎟️ ${c.nome}: saldo ${brl(saldoTicket(estado, c.id))} · gastei ${brl(gastoTicketMes(estado, c.id, ym))}`;
+    if (r.cartaoAdiante) s += `\n💳 Compras no cartão que ficam para o mês que vem: ${brl(r.cartaoAdiante)}`;
     if (r.maiorCategoria) s += `\n🔝 Maior gasto: ${r.maiorCategoria.nome} (${brl(r.maiorCategoria.valor)})`;
     if (r.orcamento > 0) s += `\n\n${barra(r.pctOrcamento)} ${Math.round(r.pctOrcamento * 100)}% do orçamento`;
     s += '\n\n' + mensagemHumor(r);
@@ -1516,7 +1551,7 @@
 
   return {
     CATEGORIAS, TIPOS_ENTRADA, INCENTIVOS, MESES, sem, uid, iso, pad, brl, dataBR, mesDe, nomeMes, mesCurto, somaMes, difMeses, diasNoMes, agora,
-    limparFala, melhorFrase, VERSICULOS, versiculoDoDia, LIMITE_VALOR, LIMITE_TEXTO, sanearEstado, BANCOS, detectarCartao, garantirCartao, mesFatura, diaFechamento, vencFatura, primeiraFaturaAberta, parcelaDesde, ligarCartaoParcelado, fatura, pagarFatura, faturasAVencer, faturaDaVez, rotuloFatura,
+    limparFala, melhorFrase, VERSICULOS, versiculoDoDia, LIMITE_VALOR, LIMITE_TEXTO, sanearEstado, BANCOS, detectarCartao, garantirCartao, mesFatura, diaFechamento, vencFatura, mesVencFatura, mesCompetencia, lancamentosDoMes, parcelaCompetencia, primeiraFaturaAberta, parcelaDesde, ligarCartaoParcelado, fatura, pagarFatura, faturasAVencer, faturaDaVez, rotuloFatura,
     NOME_TICKET, COR_TICKET, detectarTicket, garantirTicket, saldoTicket, gastoTicketMes, extratoTicket, excluirTicket,
     conversar, interpretar, separarLancamentos, lancarVarios, aplicar, remover, marcarExcluido, acharExclusao, descreverAlvo, valorConta, definirValorConta, encerrarConta, garantirRendas, acharSonho, retirarDoSonho, estadoVazio, marcarPrimeiroAcesso, resumoMes, mesesComDados, parcelaNoMes, contaNoMes, contasAVencer, contasAtrasadas, totalSonho,
     textoResumo, textoContas, textoAgenda, textoAjuda, mensagemHumor, barra, mesclar, adivinharCategoria, extrairValor, extrairData, extrairHora
