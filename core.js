@@ -419,6 +419,8 @@
   }
   /** Mês do orçamento da fatura `ym`: o mês em que ela vence, que é quando a pessoa paga. */
   function mesVencFatura(cartao, ym) { return mesDe(vencFatura(cartao, ym)); }
+  /** Fatura (chave do mês de fechamento) que vence no mês `ym`: é "o cartão do mês", paga ou não. */
+  function faturaKeyDoMes(cartao, ym) { return somaMes(ym, -difMeses(ym, mesVencFatura(cartao, ym))); }
   function mapaCartoes(estado) { const m = {}; for (const c of estado.cartoes || []) m[c.id] = c; return m; }
   /**
    * Mês do orçamento (competência) de um lançamento.
@@ -820,8 +822,8 @@
     if (typeof pf.whatsapp !== 'string') pf.whatsapp = String(pf.whatsapp == null ? '' : pf.whatsapp);
     if (!/^\d{2}:\d{2}$/.test(pf.lembreteHora || '')) pf.lembreteHora = '08:00';
     pf.orcamento = Number(pf.orcamento) || 0; pf.saldoInicial = Number(pf.saldoInicial) || 0;
-    // atalhos da tela inicial: até 3 nomes de tela, sem repetir
-    if ('atalhos' in pf) pf.atalhos = Array.isArray(pf.atalhos) ? [...new Set(pf.atalhos.filter((x) => typeof x === 'string' && /^[a-z]{2,20}$/.test(x)))].slice(0, 3) : [];
+    // atalhos da tela inicial: até 6 nomes de tela, sem repetir
+    if ('atalhos' in pf) pf.atalhos = Array.isArray(pf.atalhos) ? [...new Set(pf.atalhos.filter((x) => typeof x === 'string' && /^[a-z]{2,20}$/.test(x)))].slice(0, 6) : [];
     if (Number(estado.perfilUpd) > Date.now() + 864e5) estado.perfilUpd = Date.now();
     for (const col of COLS_ITENS) estado[col] = Array.isArray(estado[col]) ? estado[col].filter((x) => x && typeof x === 'object' && !Array.isArray(x) && x.id) : [];
     if (!Array.isArray(estado.categorias) || !estado.categorias.length) estado.categorias = CATEGORIAS.map((c) => ({ nome: c.nome, emoji: c.emoji, cor: c.cor, limite: 0 }));
@@ -1551,7 +1553,7 @@
 
   return {
     CATEGORIAS, TIPOS_ENTRADA, INCENTIVOS, MESES, sem, uid, iso, pad, brl, dataBR, mesDe, nomeMes, mesCurto, somaMes, difMeses, diasNoMes, agora,
-    limparFala, melhorFrase, VERSICULOS, versiculoDoDia, LIMITE_VALOR, LIMITE_TEXTO, sanearEstado, BANCOS, detectarCartao, garantirCartao, mesFatura, diaFechamento, vencFatura, mesVencFatura, mesCompetencia, lancamentosDoMes, parcelaCompetencia, primeiraFaturaAberta, parcelaDesde, ligarCartaoParcelado, fatura, pagarFatura, faturasAVencer, faturaDaVez, rotuloFatura,
+    limparFala, melhorFrase, VERSICULOS, versiculoDoDia, LIMITE_VALOR, LIMITE_TEXTO, sanearEstado, BANCOS, detectarCartao, garantirCartao, mesFatura, diaFechamento, vencFatura, mesVencFatura, faturaKeyDoMes, mesCompetencia, lancamentosDoMes, parcelaCompetencia, primeiraFaturaAberta, parcelaDesde, ligarCartaoParcelado, fatura, pagarFatura, faturasAVencer, faturaDaVez, rotuloFatura,
     NOME_TICKET, COR_TICKET, detectarTicket, garantirTicket, saldoTicket, gastoTicketMes, extratoTicket, excluirTicket,
     conversar, interpretar, separarLancamentos, lancarVarios, aplicar, remover, marcarExcluido, acharExclusao, descreverAlvo, valorConta, definirValorConta, encerrarConta, garantirRendas, acharSonho, retirarDoSonho, estadoVazio, marcarPrimeiroAcesso, resumoMes, mesesComDados, parcelaNoMes, contaNoMes, contasAVencer, contasAtrasadas, totalSonho,
     textoResumo, textoContas, textoAgenda, textoAjuda, mensagemHumor, barra, mesclar, adivinharCategoria, extrairValor, extrairData, extrairHora

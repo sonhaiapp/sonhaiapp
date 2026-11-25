@@ -248,7 +248,7 @@ confere('frase com dois gastos vale mais', CC.melhorFrase(['gastei 50 no mercado
 confere('versões vazias', CC.melhorFrase(['', 'Obrigado por assistir'], { hoje: quarta }), '');
 
 // ---------------------------------------------------------------- atalhos da tela inicial
-{ const e = novo(); e.perfil.atalhos = ['contas', 'contas', '<img src=x>', 'sonhos', 'agenda', 'dividas', 7]; CC.sanearEstado(e); confere('atalhos: só 3, sem repetir e sem código', e.perfil.atalhos, ['contas', 'sonhos', 'agenda']); }
+{ const e = novo(); e.perfil.atalhos = ['contas', 'contas', '<img src=x>', 'sonhos', 'agenda', 'dividas', 7, 'gastos', 'rendas', 'cartoes', 'ajustes']; CC.sanearEstado(e); confere('atalhos: só 6, sem repetir e sem código', e.perfil.atalhos, ['contas', 'sonhos', 'agenda', 'dividas', 'gastos', 'rendas']); }
 { const e = novo(); e.perfil.atalhos = 'contas'; CC.sanearEstado(e); confere('atalhos inválidos viram lista vazia', e.perfil.atalhos, []); }
 { const e = novo(); CC.sanearEstado(e); confere('conta sem atalhos não ganha campo', 'atalhos' in e.perfil, false); }
 { const a = novo(), b = novo(); b.perfil.atalhos = ['agenda', 'rendas', 'gastos']; b.perfilUpd = Date.now() + 1000; confere('atalhos passam de um aparelho para o outro', CC.mesclar(a, b).perfil.atalhos, ['agenda', 'rendas', 'gastos']); }
@@ -309,6 +309,19 @@ confere('versões vazias', CC.melhorFrase(['', 'Obrigado por assistir'], { hoje:
   confere('saldo acumulado leva a compra para janeiro', [CC.resumoMes(e, '2026-12').saldoAcum, CC.resumoMes(e, '2027-01').saldoAcum], [1000, 700]);
   const ex = CC.resumoMes(e, '2026-12');
   confere('alerta do orçamento usa o mês certo', ex.gastoTotal, 0);
+}
+
+// ---------------------------------------------------------------- v1.15: cartão do mês na tela inicial
+{
+  const h = new Date(2026, 10, 25, 10, 0);
+  const e = novo(); fala(e, 'gastei 1 no cartão Itaú', h); fala(e, 'gastei 1 no cartão Nubank', h);
+  fala(e, 'a fatura do Itaú vence dia 10 e fecha dia 3', h); fala(e, 'a fatura do Nubank vence dia 5 e fecha dia 25', h);
+  const it = e.cartoes.find((c) => c.nome === 'Itaú'), nu = e.cartoes.find((c) => c.nome === 'Nubank');
+  confere('cartão do mês: fecha 3/vence 10 em novembro é a fatura que vence 10/11', [CC.faturaKeyDoMes(it, '2026-11'), CC.vencFatura(it, CC.faturaKeyDoMes(it, '2026-11'))], ['2026-11', '2026-11-10']);
+  confere('cartão do mês: fecha 25/vence 5 em dezembro é a fatura que vence 05/12', [CC.faturaKeyDoMes(nu, '2026-12'), CC.vencFatura(nu, CC.faturaKeyDoMes(nu, '2026-12'))], ['2026-11', '2026-12-05']);
+  confere('cartão do mês: virada de ano', CC.vencFatura(nu, CC.faturaKeyDoMes(nu, '2027-01')), '2027-01-05');
+  const l = e.lancamentos.find((x) => x.cartaoId === it.id);
+  confere('compra do cartão aparece na fatura do mês do orçamento', CC.mesVencFatura(it, CC.faturaKeyDoMes(it, CC.mesCompetencia(e, l))), CC.mesCompetencia(e, l));
 }
 
 console.log(`\n${falhas ? '⚠️' : '✅'} ${ok} testes passaram, ${falhas} falharam.`);
